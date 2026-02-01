@@ -8,6 +8,8 @@ import logging
 import pathlib
 from typing import Any, Literal, Protocol, TypeAlias
 
+import numpy as np
+
 import etils.epath as epath
 import flax.nnx as nnx
 from typing_extensions import override
@@ -32,7 +34,29 @@ ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
 Filter: TypeAlias = nnx.filterlib.Filter
 
+import numpy as np # Make sure numpy is imported at the top of the file
 
+@dataclasses.dataclass(frozen=True)
+class BGRToRGBTransform(_transforms.DataTransformFn):
+    """Flips BGR images to RGB on the fly."""
+    def __call__(self, data: dict) -> dict:
+        # We look for the keys that the model expects (after repack)
+        keys_to_flip = [
+            "observation/exterior_image_1_left", 
+            "observation/wrist_image_left"
+        ]
+        for key in keys_to_flip:
+            if key in data:
+                img = data[key]
+                # If image is (C, H, W)
+                if img.shape[0] == 3:
+                    data[key] = img[[2, 1, 0], :, :]
+                # If image is (H, W, C)
+                elif img.shape[-1] == 3:
+                    data[key] = img[:, :, [2, 1, 0]]
+        return data
+
+    
 @dataclasses.dataclass(frozen=True)
 class AssetsConfig:
     """Determines the location of assets (e.g., norm stats) that will be used to set up the data pipeline.
@@ -452,6 +476,51 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
         )
 
+@dataclasses.dataclass(frozen=True)
+class MyCustomDROIDDataConfig(LeRobotDROIDDataConfig):
+    """Custom config for your specific LeRobot dataset structure."""
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # 1. Define the Repack Mapping
+        # Left Side: The Key the Model EXPECTS
+        # Right Side: The Key currently in YOUR dataset
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        # Map your 'image' to the main camera input
+                        "observation/exterior_image_1_left": "image",
+                        
+                        # Map your 'wrist_image' to the wrist input
+                        "observation/wrist_image_left": "wrist_image",
+                        
+                        # These seem to match already, but we map them explicitly to be safe
+                        "observation/joint_position": "joint_position",
+                        "observation/gripper_position": "gripper_position",
+                        "actions": "actions",
+                        "prompt": "prompt", 
+                    }
+                ),
+                # 2. Add your BGR -> RGB transform here, immediately after repacking
+                BGRToRGBTransform() 
+            ]
+        )
+
+        # 3. Use standard Droid policy transforms for the rest
+        data_transforms = _transforms.Group(
+            inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
+            outputs=[droid_policy.DroidOutputs()],
+        )
+        model_transforms = ModelTransformFactory()(model_config)
+
+        # 4. Return the combined config
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
 
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
@@ -630,6 +699,36 @@ _CONFIGS = [
                 prompt_from_task=True,
             ),
         ),
+    ),
+
+    #TRYng dummy code
+    TrainConfig(
+        name="pi05_droid_finetune_thesis",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=16,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora"
+        ),
+        # Use your custom config class here
+        data=MyCustomDROIDDataConfig(
+            repo_id="local/franka_panda",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets/checkpoints/pi05_droid/assets",
+                asset_id="droid",
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_droid/params"),
+        num_train_steps=1,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        batch_size=1,
     ),
     #
     # Fine-tuning Libero configs.
