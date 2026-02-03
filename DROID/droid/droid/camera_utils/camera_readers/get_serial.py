@@ -4,7 +4,7 @@ import pyrealsense2 as rs
 # 1. Get OAK-D Serial (Wrist?)
 print("--- OAK-D DEVICES ---")
 for device in dai.Device.getAllAvailableDevices():
-    print(f"ID: {device.getMxId()}  (State: {device.state})")
+    print(f"ID: {device.getDeviceId()}  (State: {device.state})")
 
 # 2. Get RealSense Serial (Side?)
 print("\n--- REALSENSE DEVICES ---")
