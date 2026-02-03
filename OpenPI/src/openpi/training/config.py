@@ -83,6 +83,8 @@ class AssetsConfig:
     # different robot platforms.
     asset_id: str | None = None
 
+   
+
 
 @dataclasses.dataclass(frozen=True)
 class DataConfig:
@@ -93,6 +95,7 @@ class DataConfig:
     # Contains precomputed normalization stats. If None, normalization will not be performed.
     norm_stats: dict[str, _transforms.NormStats] | None = None
 
+    root: str | None = None
     # Used to adopt the inputs from a dataset specific format to a common format
     # which is expected by the data transforms.
     repack_transforms: _transforms.Group = dataclasses.field(default_factory=_transforms.Group)
@@ -480,6 +483,8 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
 class MyCustomDROIDDataConfig(LeRobotDROIDDataConfig):
     """Custom config for your specific LeRobot dataset structure."""
 
+    root: str = None
+
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         # 1. Define the Repack Mapping
@@ -520,6 +525,7 @@ class MyCustomDROIDDataConfig(LeRobotDROIDDataConfig):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+	    root=self.root
         )
 
 @dataclasses.dataclass(frozen=True)
@@ -704,7 +710,7 @@ _CONFIGS = [
     #TRYng dummy code
     TrainConfig(
         name="pi05_droid_finetune_thesis",
-        model=pi0_config.Pi0Config(
+	model=pi0_config.Pi0Config(
             pi05=True,
             action_dim=32,
             action_horizon=16,
@@ -713,7 +719,10 @@ _CONFIGS = [
         ),
         # Use your custom config class here
         data=MyCustomDROIDDataConfig(
-            repo_id="local/franka_panda",
+            #repo_id="local/franka_panda",
+	    repo_id="/mimer/NOBACKUP/groups/vla_agent/data_H/franka_robot_finetune/lerobot/panda_droid_final_v4",
+	    #repo_id="shuooru/franka_robot_finetune",
+
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(
                 assets_dir="gs://openpi-assets/checkpoints/pi05_droid/assets",
@@ -721,14 +730,15 @@ _CONFIGS = [
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_droid/params"),
-        num_train_steps=1,
+        num_train_steps=5000,
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
         ema_decay=None,
-        batch_size=1,
+        batch_size=64,
+	save_interval = 1000
     ),
     #
     # Fine-tuning Libero configs.
