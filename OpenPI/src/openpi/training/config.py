@@ -35,28 +35,9 @@ ModelType: TypeAlias = _model.ModelType
 Filter: TypeAlias = nnx.filterlib.Filter
 
 import numpy as np # Make sure numpy is imported at the top of the file
-
-@dataclasses.dataclass(frozen=True)
-class BGRToRGBTransform(_transforms.DataTransformFn):
-    """Flips BGR images to RGB on the fly."""
-    def __call__(self, data: dict) -> dict:
-        # We look for the keys that the model expects (after repack)
-        keys_to_flip = [
-            "observation/exterior_image_1_left", 
-            "observation/wrist_image_left"
-        ]
-        for key in keys_to_flip:
-            if key in data:
-                img = data[key]
-                # If image is (C, H, W)
-                if img.shape[0] == 3:
-                    data[key] = img[[2, 1, 0], :, :]
-                # If image is (H, W, C)
-                elif img.shape[-1] == 3:
-                    data[key] = img[:, :, [2, 1, 0]]
-        return data
-
     
+
+
 @dataclasses.dataclass(frozen=True)
 class AssetsConfig:
     """Determines the location of assets (e.g., norm stats) that will be used to set up the data pipeline.
@@ -381,6 +362,7 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
         )
 
 
+
 @dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
     """
@@ -478,56 +460,60 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
         )
-
 @dataclasses.dataclass(frozen=True)
-class MyCustomDROIDDataConfig(LeRobotDROIDDataConfig):
-    """Custom config for your specific LeRobot dataset structure."""
-
+class ThesisDataConfig(LeRobotDROIDDataConfig):
+    """
+    Custom configuration for Hayssam's Thesis.
+    1. Maps 'task' string directly to 'prompt' (Robust method).
+    2. Maps Franka 8-dim actions to Droid keys.
+    3. Disables Quantile Norm to prevent loss explosion.
+    """
     root: str = None
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
-        # 1. Define the Repack Mapping
-        # Left Side: The Key the Model EXPECTS
-        # Right Side: The Key currently in YOUR dataset
+        # 1. Map Keys (Directly reading the string is safer than index lookup)
         repack_transform = _transforms.Group(
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        # Map your 'image' to the main camera input
-                        "observation/exterior_image_1_left": "image",
+                        # Map Images (Source Key -> Model Key)
+                        # We use 'exterior_image_1_left' because that is what is in your .h5 files
+                        "observation/exterior_image_1_left": "exterior_image_1_left",
+                        "observation/wrist_image_left": "wrist_image_left",
                         
-                        # Map your 'wrist_image' to the wrist input
-                        "observation/wrist_image_left": "wrist_image",
-                        
-                        # These seem to match already, but we map them explicitly to be safe
+                        # Map State
                         "observation/joint_position": "joint_position",
                         "observation/gripper_position": "gripper_position",
                         "actions": "actions",
-                        "prompt": "prompt", 
+                        
+                        # CRITICAL: Map your dataset's 'task' column to the model's 'prompt' input
+                        "prompt": "task", 
                     }
                 ),
-                # 2. Add your BGR -> RGB transform here, immediately after repacking
-                BGRToRGBTransform() 
             ]
         )
 
-        # 3. Use standard Droid policy transforms for the rest
+        # 2. Standard Droid Transforms 
+        # (This group includes DroidInputs which handles the 8-dim state creation)
         data_transforms = _transforms.Group(
             inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
             outputs=[droid_policy.DroidOutputs()],
         )
         model_transforms = ModelTransformFactory()(model_config)
+        # ^-- This automatically adds PadStatesAndActions(32), handling the padding for us!
 
-        # 4. Return the combined config
+        # 3. Create Config & DISABLE Quantile Norm
+        base = self.create_base_config(assets_dirs, model_config)
+        base = dataclasses.replace(base, use_quantile_norm=False)
+
         return dataclasses.replace(
-            self.create_base_config(assets_dirs, model_config),
+            base,
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
-	    root=self.root
-        )
-
+            root=self.root
+        )    
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
@@ -707,38 +693,60 @@ _CONFIGS = [
         ),
     ),
 
-    #TRYng dummy code
     TrainConfig(
-        name="pi05_droid_finetune_thesis",
-	model=pi0_config.Pi0Config(
+        name="pi05_dissertation_finetune",
+        project_name="franka_finetune",
+        
+        # MODEL: Pi0.5 Droid (32 dim)
+        # We explicitly set action_dim=32 so the automatic padding works
+        model=pi0_config.Pi0Config(
             pi05=True,
-            action_dim=32,
-            action_horizon=16,
+            action_dim=32,      
+            action_horizon=16, 
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora"
         ),
-        # Use your custom config class here
-        data=MyCustomDROIDDataConfig(
-            #repo_id="local/franka_panda",
-	    repo_id="/mimer/NOBACKUP/groups/vla_agent/data_H/franka_robot_finetune/lerobot/panda_droid_final_v4",
-	    #repo_id="shuooru/franka_robot_finetune",
 
-            base_config=DataConfig(prompt_from_task=True),
+        # DATA
+        data=ThesisDataConfig(
+            repo_id="Hayssamo/oru_fine_tune",
+            # We set prompt_from_task=False because we manually mapped "task"->"prompt" above.
+            base_config=DataConfig(prompt_from_task=False),
             assets=AssetsConfig(
                 assets_dir="gs://openpi-assets/checkpoints/pi05_droid/assets",
                 asset_id="droid",
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_droid/params"),
-        num_train_steps=5000,
+
+        # WEIGHTS
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "gs://openpi-assets/checkpoints/pi05_droid/params"
+        ),
+
+        # HYPERPARAMETERS
+        num_train_steps=20_000,   
+        batch_size=16,            
+        save_interval=2000,
+        
+        # OPTIMIZER (LoRA specific settings)
+        ema_decay=None, 
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000,
+            peak_lr=5e-5,
+            decay_steps=20_000,
+            decay_lr=1e-6,
+        ),
+        
+        # FREEZE FILTER (Crucial for LoRA)
         freeze_filter=pi0_config.Pi0Config(
             pi05=True,
             paligemma_variant="gemma_2b_lora",
             action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
-        ema_decay=None,
-        batch_size=64,
-	save_interval = 1000
+        
+        # LOGGING
+        wandb_enabled=True 
     ),
     #
     # Fine-tuning Libero configs.
