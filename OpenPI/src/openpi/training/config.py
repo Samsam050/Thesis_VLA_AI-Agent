@@ -692,13 +692,11 @@ _CONFIGS = [
             ),
         ),
     ),
-
+    #the last trainconfig for finetune, should be correct compared to the one before. the old one is added in the end of code.
     TrainConfig(
-        name="pi05_dissertation_finetune",
+        name="pi05_oru_finetune",
         project_name="franka_finetune",
         
-        # MODEL: Pi0.5 Droid (32 dim)
-        # We explicitly set action_dim=32 so the automatic padding works
         model=pi0_config.Pi0Config(
             pi05=True,
             action_dim=32,      
@@ -710,7 +708,6 @@ _CONFIGS = [
         # DATA
         data=ThesisDataConfig(
             repo_id="Hayssamo/oru_fine_tune",
-            # We set prompt_from_task=False because we manually mapped "task"->"prompt" above.
             base_config=DataConfig(prompt_from_task=False),
             assets=AssetsConfig(
                 assets_dir="gs://openpi-assets/checkpoints/pi05_droid/assets",
@@ -725,7 +722,7 @@ _CONFIGS = [
 
         # HYPERPARAMETERS
         num_train_steps=20_000,   
-        batch_size=16,            
+        batch_size=32,            
         save_interval=2000,
         
         # OPTIMIZER (LoRA specific settings)
@@ -1096,3 +1093,86 @@ def get_config(config_name: str) -> TrainConfig:
         raise ValueError(f"Config '{config_name}' not found.{closest_str}")
 
     return _CONFIGS_DICT[config_name]
+"""
+    @dataclasses.dataclass(frozen=True)
+class MyCustomDROIDDataConfig(LeRobotDROIDDataConfig):
+
+    root: str = None
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # 1. Define the Repack Mapping
+        # Left Side: The Key the Model EXPECTS
+        # Right Side: The Key currently in YOUR dataset
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        # Map your 'image' to the main camera input
+                        "observation/exterior_image_1_left": "image",
+                        
+                        # Map your 'wrist_image' to the wrist input
+                        "observation/wrist_image_left": "wrist_image",
+                        
+                        # These seem to match already, but we map them explicitly to be safe
+                        "observation/joint_position": "joint_position",
+                        "observation/gripper_position": "gripper_position",
+                        "actions": "actions",
+                        "prompt": "prompt", 
+                    }
+                ),
+                # 2. Add your BGR -> RGB transform here, immediately after repacking
+                BGRToRGBTransform() 
+            ]
+        )
+
+        # 3. Use standard Droid policy transforms for the rest
+        data_transforms = _transforms.Group(
+            inputs=[droid_policy.DroidInputs(model_type=model_config.model_type)],
+            outputs=[droid_policy.DroidOutputs()],
+        )
+        model_transforms = ModelTransformFactory()(model_config)
+
+        # 4. Return the combined config
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+	    root=self.root
+        )
+
+    #TRYng dummy code
+    TrainConfig(
+        name="pi05_droid_finetune_thesis",
+	model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,
+            action_horizon=16,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora"
+        ),
+        # Use your custom config class here
+        data=MyCustomDROIDDataConfig(
+            #repo_id="local/franka_panda",
+	    repo_id="/mimer/NOBACKUP/groups/vla_agent/data_H/franka_robot_finetune/lerobot/panda_droid_final_v4",
+	    #repo_id="shuooru/franka_robot_finetune",
+
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="gs://openpi-assets/checkpoints/pi05_droid/assets",
+                asset_id="droid",
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_droid/params"),
+        num_train_steps=5000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        batch_size=64,
+	save_interval = 1000
+    )
+    """
