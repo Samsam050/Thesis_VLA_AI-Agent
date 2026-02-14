@@ -19,7 +19,7 @@ import cv2
 import os
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 
-DROID_CONTROL_FREQUENCY = 10
+DROID_CONTROL_FREQUENCY = 15
 #prompt i used:
 # ok sucess: Pick up the yellow banana **from the table** and put it in the pink bowl.  
 # bad sucess: Pick up the yellow banana **from the table** and drop it in the pink bowl. Pick up the yellow banana from the table and **place it in the pink bowl and let go**.
@@ -38,10 +38,10 @@ class Args:
     
 
     # Rollout parameters
-    max_timesteps: int = 2000
+    max_timesteps: int = 10000
     # How many actions to execute from a predicted action chunk before querying policy server again
     # 8 is usually a good default (equals 0.5 seconds of action execution).
-    open_loop_horizon: int = 7
+    open_loop_horizon: int = 8
 
     # Remote server parameters
     remote_host: str = "130.243.124.173"  # point this to the IP address of the policy server, e.g., "192.168.1.100"
@@ -165,19 +165,30 @@ def main(args: Args):
 
                 # Select current action to execute from chunk
                 action = pred_action_chunk[actions_from_chunk_completed]
-                actions_from_chunk_completed += 1
+            
                 #print(action[-1].item())
                 # Binarize gripper action
+               #action=action.copy()
+            
+                #action[:-1] = action[:-1]*Hz
+                actions_from_chunk_completed += 1
+                #raw_gripper = action[-1]
+                #real_gripper = (raw_gripper * 0.5) + 0.4
+                #print(f"Raw: {raw_gripper:.4f} -> Real: {real_gripper:.4f}")    
+                print(action[-1])
                 if action[-1].item() > 0.5:
-
+                #if real_gripper > 0.5:
                     # action[-1] = 1.0
                     action = np.concatenate([action[:-1], np.ones((1,))])
+                    print("close")
                 else:
                     # action[-1] = 0.0
                     action = np.concatenate([action[:-1], np.zeros((1,))])
+                    print("open")
 
                 # clip all dimensions of action to [-1, 1]
                 action = np.clip(action, -1, 1)
+               
 
                 env.step(action)
                 elapsed_time = time.time() - start_time
@@ -247,7 +258,6 @@ def _extract_observation(args: Args, obs_dict, *, save_to_disk=False):
     if right_image is not None:
         right_image = right_image[..., :3][..., ::-1]
 
-    # --- THE LINUX FIX: JUST CROP IT ---
     if save_to_disk:
         valid_imgs = [x for x in [left_image, wrist_image, right_image] if x is not None]
         
@@ -259,7 +269,6 @@ def _extract_observation(args: Args, obs_dict, *, save_to_disk=False):
         
         combined_image = np.concatenate(cropped_imgs, axis=1)
         Image.fromarray(combined_image).save("robot_camera_views.png")
-    # -----------------------------------
 
     robot_state = obs_dict["robot_state"]
     
