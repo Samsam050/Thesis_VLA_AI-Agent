@@ -101,16 +101,19 @@ def collect_trajectory(
 
         # Step Environment #
         control_timestamps["control_start"] = time_ms()
+        
         if skip_action:
-            action_info = env.create_action_dict(np.zeros_like(action))
+            safe_action = np.zeros_like(action)
+            safe_action[-1] = action[-1] 
+            action_info = env.step(safe_action)
+            
+            # action_info['movement_enabled'] = False 
         else:
             action_info = env.step(action)
-        action_info.update(controller_action_info)
-
         # Save Data #
         control_timestamps["step_end"] = time_ms()
         obs["timestamp"]["control"] = control_timestamps
-        timestep = {"observation": obs, "action": action_info}
+        timestep = {"observations": obs, "action": action_info}
         if save_filepath:
             traj_writer.write_timestep(timestep)
 
