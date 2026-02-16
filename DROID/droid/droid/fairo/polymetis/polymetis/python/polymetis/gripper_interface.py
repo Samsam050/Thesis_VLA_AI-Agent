@@ -71,19 +71,18 @@ class GripperInterface:
         return self.grpc_connection.GetState(EMPTY)
 
     def goto(self, width: float, speed: float, force: float, blocking: bool = True):
-        """Commands the gripper to a certain width (SAFE VERSION)"""
-        
-        # --- FIX 1: The "Busy Check" (Prevents SIGABRT) ---
-        # We ask the hardware: "Are you moving?"
+
+        if width < 0.004:  # If target is less than 4mm (basically closed)
+            print(f"Target is {width:.4f}m -> Switching to GRASP (60N) !!!")
+            self.grasp(speed=speed, force=50.0, blocking=blocking)
+            return
         try:
             current_state = self.get_state()
             if current_state.is_moving:
-                return  # Hardware is busy, ignore this command to prevent crash
+                return 
         except:
-            pass # If network fails, we proceed carefully
+            pass 
 
-        # --- FIX 2: The "Jitter Guard" ---
-        # Ignore commands that are basically the same as the last one
         if self.last_mode == "move" and self.last_target_width is not None:
             if abs(width - self.last_target_width) < 0.00001:  # tolerance
                 return 
@@ -93,7 +92,11 @@ class GripperInterface:
 
         # Send Command
         cmd = polymetis_pb2.GripperCommand(
-            width=width, speed=speed, grasp=False, stop=False
+            width=width, 
+            speed=speed,
+            force=force, 
+            grasp=False, 
+            stop=False
         )
         cmd.timestamp.GetCurrentTime()
 
@@ -148,13 +151,10 @@ class GripperInterface:
         speed: float,
         force: float,
         grasp_width: float = 0.0,
-        epsilon_inner: float = -1.0,
-        epsilon_outer: float = -1.0,
+        epsilon_inner: float = 0.2,
+        epsilon_outer: float = 0.2,
         blocking: bool = True,
     ):
-        """Commands the gripper to grasp (SAFE VERSION)"""
-
-        # --- FIX 1: The "Busy Check" ---
         try:
             current_state = self.get_state()
             if current_state.is_moving:
@@ -162,11 +162,9 @@ class GripperInterface:
         except:
             pass
 
-        # --- FIX 2: The "Spam Guard" ---
         if self.last_mode == "grasp":
             if abs(force - self.last_force) < 2.0:
                 return 
-            # If new force is different, we LET IT PASS so it can squeeze harder!
             print(f"Updating Grasp Force: {self.last_force} -> {force}") 
 
         self.last_mode = "grasp"
