@@ -1,0 +1,2 @@
+[2026-03-21 13:56:35,540][__main__][INFO] - Adding /home/frankanuc01/Thesis_H/new_try/droid/droid/fairo/polymetis/polymetis/build to $PATH
+[2026-03-21 13:56:40,726][polymetis.robot_client.robotiq_gripper.robotiq_gripper_client][WARNING] - Failed to read gripper state. Returning last observed state instead.

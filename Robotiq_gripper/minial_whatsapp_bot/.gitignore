@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Node.js bridge
+bridge/node_modules/
+bridge/dist/
+bridge/wa_auth/

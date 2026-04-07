@@ -1,0 +1,2 @@
+[2026-03-19 16:48:44,493][__main__][INFO] - Adding /home/frankanuc01/Thesis_H/new_try/droid/droid/fairo/polymetis/polymetis/build to $PATH
+[2026-03-19 16:48:44,661][pymodbus.client.sync][ERROR] - [Errno 2] could not open port /dev/ttyUSB0: [Errno 2] No such file or directory: '/dev/ttyUSB0'

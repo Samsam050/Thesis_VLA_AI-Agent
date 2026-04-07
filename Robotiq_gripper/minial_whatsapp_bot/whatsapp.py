@@ -1,0 +1,220 @@
+"""WhatsApp channel via Node.js Baileys bridge.
+
+Architecture:
+    Node.js bridge (bridge/) ←WebSocket→ this module ←→ OpenRouterModel
+
+Setup:
+    cd bridge && npm install && npm run build
+    node dist/index.js          # terminal 1 — scan QR on first run
+    python main.py --whatsapp   # terminal 2
+"""
+import asyncio
+import base64
+import json
+import logging
+import os
+import signal
+import threading
+from collections import OrderedDict
+from pathlib import Path
+import pyrealsense2 as rs
+import numpy as np
+
+import cv2
+import depthai as dai
+import websockets
+from dotenv import load_dotenv
+
+from model import OpenAIModel
+from tunnel import CloudflaredTunnel
+
+BRIDGE_URL = os.getenv("BRIDGE_URL", "ws://127.0.0.1:8765")
+BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "")
+ALLOW_FROM = set(filter(None, os.getenv("ALLOW_FROM", "").split(",")))
+
+log = logging.getLogger("whatsapp")
+
+OAK_FRAME_WIDTH = int(os.getenv("OAK_FRAME_WIDTH", "640").strip())
+OAK_FRAME_HEIGHT = int(os.getenv("OAK_FRAME_HEIGHT", "360").strip())
+OAK_JPEG_QUALITY = min(100, max(10, int(os.getenv("OAK_JPEG_QUALITY", "80").strip())))
+
+_OAK_LOCK = threading.Lock()
+
+def capture_oak_frame() -> bytes:
+    """Capture a single JPEG frame from OAK-D RGB camera and IMMEDIATELY release the hardware."""
+    with _OAK_LOCK:
+        p = dai.Pipeline()
+        cam = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+        q = cam.requestOutput((OAK_FRAME_WIDTH, OAK_FRAME_HEIGHT), dai.ImgFrame.Type.BGR888p).createOutputQueue()
+        p.start()
+        try:
+            # Grab exactly one frame
+            frame = q.get().getCvFrame()
+        finally:
+            # THIS is the magic line that turns the camera off so the VLA can use it later
+            p.stop()
+            
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
+    return buf.tobytes()
+
+def capture_realsense_frame() -> bytes:
+    """Capture a single JPEG frame from Intel RealSense camera and IMMEDIATELY release the hardware."""
+    pipeline = rs.pipeline()
+    config = rs.config()
+    
+    # Enable the color stream (640x480 is standard and fast)
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    
+    pipeline.start(config)
+    try:
+        # RealSense cameras need to drop a few frames to let the auto-exposure settle
+        # Otherwise, the first frame is usually pitch black or extremely dark
+        for _ in range(5):
+            frames = pipeline.wait_for_frames()
+            
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            raise RuntimeError("Could not grab RealSense frame")
+            
+        # Convert to numpy array for OpenCV
+        color_image = np.asanyarray(color_frame.get_data())
+    finally:
+        # THIS is the magic line that turns the camera off so the VLA can use it later
+        pipeline.stop()
+        
+    _, buf = cv2.imencode(".jpg", color_image, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
+    return buf.tobytes()
+
+
+class WhatsAppBot:
+    def __init__(self):
+        self.model = OpenAIModel(log_level=logging.INFO)
+        self.histories: dict[str, list] = {}
+        self.seen: OrderedDict[str, None] = OrderedDict()
+        self._ws = None
+        self._tunnel = CloudflaredTunnel()
+
+    async def run(self):
+        loop = asyncio.get_event_loop()
+        loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(self._shutdown()))
+        loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(self._shutdown()))
+        log.info("Connecting to bridge at %s", BRIDGE_URL)
+        try:
+            while True:
+                try:
+                    async with websockets.connect(BRIDGE_URL) as ws:
+                        self._ws = ws
+                        if BRIDGE_TOKEN:
+                            await ws.send(json.dumps({"type": "auth", "token": BRIDGE_TOKEN}))
+                        log.info("Connected to WhatsApp bridge")
+                        async for raw in ws:
+                            await self._handle(raw)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    self._ws = None
+                    log.warning("Bridge disconnected: %s — retrying in 5s", e)
+                    await asyncio.sleep(5)
+        finally:
+            await self._cleanup()
+
+    async def _shutdown(self):
+        log.info("Shutting down...")
+        for task in asyncio.all_tasks():
+            if task is not asyncio.current_task():
+                task.cancel()
+
+    async def _cleanup(self):
+        await self._tunnel.stop()
+
+    async def _handle(self, raw: str):
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+
+        msg_type = data.get("type")
+        if msg_type == "message":
+            await self._on_message(data)
+        elif msg_type == "error":
+            log.error("Bridge error: %s", data.get("error"))
+
+    async def _on_message(self, data: dict):
+        msg_id = data.get("id", "")
+        if msg_id:
+            if msg_id in self.seen: return
+            self.seen[msg_id] = None
+            if len(self.seen) > 1000: self.seen.popitem(last=False)
+
+        sender = data.get("sender", "")
+        pn = data.get("pn", "")
+        chat_id = sender
+        phone = (pn or sender).split("@")[0]
+        content = data.get("content", "").strip()
+
+        if not content or not chat_id:
+            return
+
+        # 1. Require the @bot prefix to wake up
+        if not content.lower().startswith("@bot"):
+            return
+            
+        # Strip "@bot" out so the AI/logic just sees the raw command
+        clean_content = content[4:].strip()
+
+        if ALLOW_FROM and phone not in ALLOW_FROM:
+            return
+
+        log.info("Message from %s: %s", phone, clean_content[:80])
+
+        # 2. Snapshot Interceptor
+        # If you ask for a picture, grab it quickly, send it, and return.
+        snapshot_triggers = {"picture", "snapshot", "photo", "see", "camera", "look"}
+        if any(word in clean_content.lower() for word in snapshot_triggers):
+            await self._send(chat_id, "Taking a quick look through both cameras... (They will turn off immediately after)")
+            try:
+                loop = asyncio.get_event_loop()
+                
+                # Grab and send the Wrist Camera (OAK-D)
+                oak_jpeg = await loop.run_in_executor(None, capture_oak_frame)
+                await self._send_image(chat_id, oak_jpeg, "Wrist Camera (OAK-D)")
+                
+                # Grab and send the External Camera (RealSense)
+                rs_jpeg = await loop.run_in_executor(None, capture_realsense_frame)
+                await self._send_image(chat_id, rs_jpeg, "External Camera (RealSense)")
+                
+            except Exception as e:
+                log.error("Camera capture failed: %s", e)
+                await self._send(chat_id, f"Failed to get a picture: {e}")
+            return
+
+        # 3. Pass everything else to the AI Agent
+        hist = self.histories.setdefault(chat_id, [])
+        hist.append({"role": "user", "content": clean_content})
+
+        reply = await asyncio.get_event_loop().run_in_executor(
+            None, self.model.generate_response, hist
+        )
+        hist.append({"role": "assistant", "content": reply})
+
+        await self._send(chat_id, reply)
+
+    async def _send(self, to: str, text: str):
+        if not self._ws: return
+        try:
+            await self._ws.send(json.dumps({"type": "send", "to": to, "text": text}, ensure_ascii=False))
+        except Exception as e:
+            log.error("Send failed: %s", e)
+
+    async def _send_image(self, to: str, jpeg: bytes, caption: str = ""):
+        if not self._ws: return
+        try:
+            payload = {"type": "send_image", "to": to, "image": base64.b64encode(jpeg).decode(), "caption": caption}
+            await self._ws.send(json.dumps(payload))
+        except Exception as e:
+            log.error("Send image failed: %s", e)
+
+
+def run_bot():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    asyncio.run(WhatsAppBot().run())
