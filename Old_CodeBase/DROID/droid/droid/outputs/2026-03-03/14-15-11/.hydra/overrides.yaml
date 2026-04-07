@@ -1,0 +1,2 @@
+- gripper=robotiq_2f
+- gripper.comport=/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_DAT2JDK-if00-port0
