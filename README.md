@@ -1,3 +1,5 @@
+TODO:FIX README, I have 3 folders for each attempt i have done. First attempt which worked sometimes with franka gripper (called old_codebase) second attempt called robotiq_gripper with the robotiq_gripper, third attempt trying to fix FCI issue with franka gripper called Franka_gripper
+
 Thesis in Large Language Model (LLM) powered robotic agent
 
 Using OpenPI published by Physical Intelligence team.

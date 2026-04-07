@@ -1,0 +1,2 @@
+- gripper=franka_hand
+- gripper.executable_cfg.robot_ip=1
