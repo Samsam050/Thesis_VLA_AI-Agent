@@ -23,7 +23,12 @@ def play_episode(file_path):
         if 'joint_positions' in robot_state:
             qpos = robot_state['joint_positions'][:]
             print(f"Arm Joints Shape: {qpos.shape}")
-        
+            print("Sample joint positions:", qpos[:3])
+
+        if 'cartesian_position' in robot_state:
+            pose = robot_state['cartesian_position'][:]
+            print(f"Cartesian Position Shape: {pose.shape}")
+            print("Sample cartesian pose:", pose[:3])
         # Check Gripper
         if 'gripper_position' in robot_state:
             gpos = robot_state['gripper_position'][:]
