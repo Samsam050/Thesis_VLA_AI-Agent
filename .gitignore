@@ -1,7 +1,0 @@
-*.sh
-*.iso
-*.zip
-/OpenPI/examples/droid/Miniconda3-latest-Linux-x86_64.sh
-/DROID/droid/.vscode/browse.vc.db *.db
-*.sh
-*.db

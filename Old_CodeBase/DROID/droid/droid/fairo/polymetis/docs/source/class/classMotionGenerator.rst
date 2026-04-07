@@ -1,4 +1,0 @@
-Class MotionGenerator
-=====================
-
-.. doxygenclass:: MotionGenerator

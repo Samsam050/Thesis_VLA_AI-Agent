@@ -1,4 +1,0 @@
-Struct MockModel
-================
-
-.. doxygenstruct:: MockModel

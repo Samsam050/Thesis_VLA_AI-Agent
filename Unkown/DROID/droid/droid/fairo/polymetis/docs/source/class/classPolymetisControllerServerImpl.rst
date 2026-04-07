@@ -1,4 +1,0 @@
-Class PolymetisControllerServerImpl
-===============================
-
-.. doxygenclass:: PolymetisControllerServerImpl

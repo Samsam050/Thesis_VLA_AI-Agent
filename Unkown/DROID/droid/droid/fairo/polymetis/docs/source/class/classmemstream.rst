@@ -1,4 +1,0 @@
-Class memstream
-===============
-
-.. doxygenclass:: memstream

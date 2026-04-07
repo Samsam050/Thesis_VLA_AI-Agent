@@ -1,3 +1,0 @@
-- robot_client=franka_hardware
-- +robot_client.ip_address=172.16.0.101
-- +use_real_time=true

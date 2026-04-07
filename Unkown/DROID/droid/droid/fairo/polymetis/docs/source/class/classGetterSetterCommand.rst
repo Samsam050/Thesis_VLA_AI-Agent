@@ -1,4 +1,0 @@
-Class GetterSetterCommand
-=========================
-
-.. doxygenclass:: GetterSetterCommand

@@ -1,1 +1,0 @@
-Adapted from allegro_hand_ros_v4 (https://github.com/simlabrobotics/allegro_hand_ros_v4)

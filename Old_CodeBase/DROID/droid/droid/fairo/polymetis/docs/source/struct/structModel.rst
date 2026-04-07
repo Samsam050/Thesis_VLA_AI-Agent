@@ -1,4 +1,0 @@
-Struct Model
-============
-
-.. doxygenstruct:: Model

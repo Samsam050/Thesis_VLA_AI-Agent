@@ -1,4 +1,0 @@
-Struct MockMotionCallback
-=========================
-
-.. doxygenstruct:: MockMotionCallback

@@ -1,9 +1,0 @@
-[2026-02-09 10:32:02,961][__main__][INFO] - Adding /home/frankanuc01/Thesis_H/Thesis/DROID/droid/droid/fairo/polymetis/polymetis/build to $PATH
-[2026-02-09 10:32:03,083][polymetis.robot_client.executable_robot_client][INFO] - === Config: ===
-exec: franka_hand_client
-robot_ip: 172.16.0.101
-control_ip: 0.0.0.0
-control_port: 50052
-robot_client_metadata_path: /tmp/tmp4ellvz0b
-
-[2026-02-09 10:32:03,083][polymetis.robot_client.executable_robot_client][INFO] - === Executing client at /home/frankanuc01/Thesis_H/Thesis/DROID/droid/droid/fairo/polymetis/polymetis/build/franka_hand_client ===
