@@ -1,4 +1,0 @@
-Class VacuumGripperCommand
-==========================
-
-.. doxygenclass:: VacuumGripperCommand

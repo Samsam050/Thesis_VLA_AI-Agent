@@ -1,4 +1,0 @@
-Class MockRobotControl
-======================
-
-.. doxygenclass:: MockRobotControl

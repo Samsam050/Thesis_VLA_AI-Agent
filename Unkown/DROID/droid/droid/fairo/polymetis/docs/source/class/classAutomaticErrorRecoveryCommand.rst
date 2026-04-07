@@ -1,4 +1,0 @@
-Class AutomaticErrorRecoveryCommand
-===================================
-
-.. doxygenclass:: AutomaticErrorRecoveryCommand

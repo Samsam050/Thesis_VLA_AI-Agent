@@ -1,4 +1,0 @@
-Struct JointPositionMotion
-==========================
-
-.. doxygenstruct:: JointPositionMotion

@@ -1,4 +1,0 @@
-Class ControlLoopWithTransformationMatrix
-=========================================
-
-.. doxygenclass:: ControlLoopWithTransformationMatrix

@@ -1,4 +1,0 @@
-Struct Robot
-============
-
-.. doxygenstruct:: Robot

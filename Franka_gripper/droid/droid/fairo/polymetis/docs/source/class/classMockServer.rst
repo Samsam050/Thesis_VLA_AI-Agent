@@ -1,4 +1,0 @@
-Class MockServer
-================
-
-.. doxygenclass:: MockServer

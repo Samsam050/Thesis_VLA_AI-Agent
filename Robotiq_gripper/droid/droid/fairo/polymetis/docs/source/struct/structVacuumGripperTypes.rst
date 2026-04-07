@@ -1,4 +1,0 @@
-Struct VacuumGripperTypes
-=========================
-
-.. doxygenstruct:: VacuumGripperTypes

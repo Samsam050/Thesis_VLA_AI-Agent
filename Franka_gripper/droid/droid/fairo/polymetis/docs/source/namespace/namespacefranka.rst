@@ -1,4 +1,0 @@
-Namespace franka
-================
-
-.. doxygennamespace:: franka
