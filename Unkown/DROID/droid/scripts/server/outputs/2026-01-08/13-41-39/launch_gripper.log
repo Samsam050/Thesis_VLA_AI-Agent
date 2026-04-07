@@ -1,0 +1,9 @@
+[2026-01-08 13:41:39,650][__main__][INFO] - Adding /home/frankanuc01/miniconda3/envs/droid_env/lib/python3.8/build to $PATH
+[2026-01-08 13:41:39,784][polymetis.robot_client.executable_robot_client][INFO] - === Config: ===
+exec: franka_hand_client
+robot_ip: 172.16.0.101
+control_ip: 0.0.0.0
+control_port: 50052
+robot_client_metadata_path: /tmp/tmpy97nz2fv
+
+[2026-01-08 13:41:39,785][polymetis.robot_client.executable_robot_client][INFO] - === Executing client at /home/frankanuc01/miniconda3/envs/droid_env/bin/franka_hand_client ===
