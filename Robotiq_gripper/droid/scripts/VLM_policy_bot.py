@@ -1,4 +1,4 @@
-
+from typing import Optional
 import contextlib
 import dataclasses
 import faulthandler
@@ -38,7 +38,7 @@ VLM_MODEL = "gpt-5-mini"
 LIVE_HOST = "127.0.0.1"
 LIVE_PORT = 8008
 INSTRUCTION_FILE = Path("/tmp/robot_instruction.txt")
-TTS_SCRIPT = "/home/frankanuc01/Thesis_H/new_try/droid/scripts/TTS.py"
+TTS_SCRIPT = "/home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/scripts/TTS.py"
 ROBOT_UPDATES_FILE = Path("/tmp/robot_updates.jsonl")
 ROBOT_RESULT_FILE = Path("/tmp/robot_result.json")
 
@@ -83,7 +83,7 @@ class Args:
     live_port: int = LIVE_PORT
 
     # Remote server parameters
-    remote_host: str = "130.243.124.161"  # point this to the IP address of the policy server
+    remote_host: str = "130.243.124.173"  # point this to the IP address of the policy server
     remote_port: int = 8000  # default server port for openpi servers is 8000
 
 
@@ -208,7 +208,7 @@ def emit_robot_update(event_type: str, message: str, final: bool = False, **extr
             logging.error(f"Failed to write robot result: {e}")
 
 
-def _final_result(status: str, message: str = "", event_type: str | None = None, **extra) -> dict:
+def _final_result(status: str, message: str = "", event_type: Optional[str] = None, **extra) -> dict:
     event = event_type or status
     emit_robot_update(event, message, final=True, status=status, **extra)
     result = {"status": status}
@@ -1140,6 +1140,8 @@ def main(args: Args):
         try:
             instruction = wait_for_instruction()
             if instruction == "exit":
+                print("Restting and exitting")
+                _log_and_reset(env)
                 break
 
             result = execute_task_with_vlm(instruction, env, args, policy_client, live_stream)
@@ -1163,7 +1165,11 @@ def main(args: Args):
             _log_and_reset(env)
 
         except KeyboardInterrupt:
-            print("Stopped by user.")
+            print("Stopped by user. Resetting before shutdown...")
+            try:
+                _log_and_reset(env)
+            except Exception as e:
+                print(f"Reset failed during KeyboardInterrupt handling: {e}")
             break
 
 

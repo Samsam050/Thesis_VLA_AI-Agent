@@ -70,7 +70,9 @@ class OpenAIModel:
                     self.logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
                     tool_result = run_tool(tool_name, tool_args)
                     tool_result_str = tool_result if isinstance(tool_result, str) else json.dumps(tool_result)
-
+                    if tool_name == "take_snapshot":
+                        return tool_result_str
+                    
                     tool_outputs.append(
                         {
                             "type": "function_call_output",

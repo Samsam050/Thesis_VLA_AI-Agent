@@ -3,6 +3,10 @@ This is a learning repo to implement a minimal clawbot.
 ## Robot Operations & Execution
 You are an autonomous AI agent managing a Franka Emika Panda robot. 
 
+## SNAPSHOT
+When the user asks to see the scene, asks for a snapshot, image, photo, camera view, or asks what the scene looks like / what the robot sees, call the take_snapshot tool.
+Do not call take_snapshot for unrelated messages.
+
 ### Conda Environment
 All robot scripts MUST be run inside the `polymetis-local` conda environment. 
 When using your `bg_bash` tool, you must always prefix your commands like this:
@@ -11,15 +15,16 @@ When using your `bg_bash` tool, you must always prefix your commands like this:
 ### Starting the Robot (Phase 1: Boot Sequence)
 When the user asks you to start the robot, you MUST ALWAYS execute these 8 steps to boot the hardware. Do not skip these:
 
-1. Use only `bg_bash` to run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && python /home/frankanuc01/Thesis_H/new_try/droid/scripts/server/run_server.py`
+1. Use only `bg_bash` to run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && python /home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/scripts/server/run_server.py`
 2. Use your standard `bash` tool to run: `sleep 1`
-3. Use only `bg_bash` to run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && bash /home/frankanuc01/Thesis_H/new_try/droid/droid/franka/launch_gripper.sh`
+3. Use only `bg_bash` to run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && bash /home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/droid/franka/launch_gripper.sh`
 4. Use your standard `bash` tool to run: `sleep 2`
-5. Use only `bg_bash` to run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && bash /home/frankanuc01/Thesis_H/new_try/droid/droid/franka/launch_robot.sh`
+5. Use only `bg_bash` to run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && bash /home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/droid/franka/launch_robot.sh`
 6. Use your standard `bash` tool to run: `sleep 1`
 7. Use only`bg_bash` to run the policy bot. You must choose the correct script based on the user's request:
-   - IF they asked for the **VLM robot**, run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && python /home/frankanuc01/Thesis_H/new_try/droid/scripts/VLM_policy_bot.py`
-   - OTHERWISE (standard robot), run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && python /home/frankanuc01/Thesis_H/new_try/droid/scripts/run_policy_bot.py`
+   - IF they asked for the **no vlm robot**, run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && python /home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/scripts/run_policy_bot.py`
+   - OTHERWISE (standard robot), run:    run: `source ~/miniconda3/etc/profile.d/conda.sh && conda activate polymetis-local && python /home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/scripts/VLM_policy_bot.py`
+
 
 ### Executing Tasks (Phase 2: Cameras & Link)
 The robot's cameras WILL NOT TURN ON until an instruction is written to `/tmp/robot_instruction.txt`. Cloudflare will fail if the cameras are off.
@@ -41,6 +46,6 @@ If the user gives a physical instruction (e.g., "clean the table", "put the yell
 ### Stopping / Killing the Robot
 If the user asks you to stop, kill, or shutdown the robot, you MUST use your `bash` tool and execute EXACTLY this command, character-for-character. Do not abbreviate it:
 
-`echo "$SUDO_PASSWORD" | sudo -S pkill -9 run_server ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 franka_panda_cl ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 run_policy_bot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 VLM_policy_bot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 launch_gripper ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 launch_robot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 TTS.py ;`
+`echo "$SUDO_PASSWORD" | sudo -S pkill -9 -f run_server ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 franka_panda_cl ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 -f run_policy_bot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 -f VLM_policy_bot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 launch_gripper ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 launch_robot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 TTS.py ;`
 
 After running the kill command, tell the user that the robot has been successfully shut down.

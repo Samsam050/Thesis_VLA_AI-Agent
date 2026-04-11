@@ -44,7 +44,7 @@ class Args:
     open_loop_horizon: int = 8
 
     # Remote server parameters
-    remote_host: str = "130.243.124.161"  # point this to the IP address of the policy server, e.g., "192.168.1.100"
+    remote_host: str = "130.243.124.173"  # point this to the IP address of the policy server, e.g., "192.168.1.100"
     remote_port: int = (
         8000  # point this to the port of the policy server, default server port for openpi servers is 8000
     )
@@ -182,7 +182,7 @@ def main(args: Args):
         #TODO: ADD LLM with this in the VLM_policy so it sounds more naturally speaking what doing instead of saying just prompt
         speaker_process = subprocess.Popen([
             "python3",
-            "/home/frankanuc01/Thesis_H/new_try/droid/scripts/TTS.py",
+            "/home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/scripts/TTS.py",
             instruction
         ])
 

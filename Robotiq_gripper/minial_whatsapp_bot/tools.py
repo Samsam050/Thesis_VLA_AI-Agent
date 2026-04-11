@@ -8,7 +8,20 @@ import subprocess
 import time
 import os 
 from dotenv import load_dotenv
+import shlex
+from pathlib import Path
+import depthai as dai
+import pyrealsense2 as rs
+import json
+import threading
+import cv2
+import numpy as np
 
+OAK_FRAME_WIDTH = int(os.getenv("OAK_FRAME_WIDTH", "640").strip())
+OAK_FRAME_HEIGHT = int(os.getenv("OAK_FRAME_HEIGHT", "360").strip())
+OAK_JPEG_QUALITY = min(100, max(10, int(os.getenv("OAK_JPEG_QUALITY", "80").strip())))
+
+_OAK_LOCK = threading.Lock()
 # ANSI colors
 RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
 
@@ -106,15 +119,95 @@ def bash(args):
     return "".join(output_lines).strip() or "(empty)"
 
 def bg_bash(args):
-    """Run a shell command in the background (non-blocking)."""
+    """Run a shell command in the background and return pid + log path + quick health check."""
     cmd = args["cmd"]
-    full_cmd = f"nohup bash -c '{cmd}' > /tmp/bg_bash_tool.log 2>&1 & echo $!"
-    
+
+    log_dir = Path("/tmp/robot_logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(c if c.isalnum() else "_" for c in cmd[:40]).strip("_")
+    log_path = log_dir / f"{stamp}_{safe_name}.log"
+
+    wrapped = f"nohup bash -lc {shlex.quote(cmd)} > {shlex.quote(str(log_path))} 2>&1 & echo $!"
     proc = subprocess.Popen(
-        full_cmd, shell=True, executable="/bin/bash", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        wrapped,
+        shell=True,
+        executable="/bin/bash",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
+
     pid = proc.stdout.read().strip()
-    return f"Success. Process started in background with PID: {pid}."
+    time.sleep(2)
+
+    check = subprocess.run(
+        ["bash", "-lc", f"ps -p {pid} >/dev/null && echo RUNNING || echo EXITED"],
+        capture_output=True,
+        text=True,
+    )
+    status = check.stdout.strip()
+
+    tail = ""
+    try:
+        if log_path.exists():
+            tail = log_path.read_text(errors="ignore")[-1000:]
+    except Exception:
+        pass
+
+    return (
+        f"Background process PID={pid}\n"
+        f"Status after 2s: {status}\n"
+        f"Log file: {log_path}\n"
+        f"Recent log output:\n{tail if tail else '(no output yet)'}"
+    )
+
+def capture_oak_frame() -> bytes:
+    """Capture a single JPEG frame from OAK-D RGB camera and IMMEDIATELY release the hardware."""
+    with _OAK_LOCK:
+        p = dai.Pipeline()
+        cam = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+        q = cam.requestOutput((OAK_FRAME_WIDTH, OAK_FRAME_HEIGHT), dai.ImgFrame.Type.BGR888p).createOutputQueue()
+        p.start()
+        try:
+            # Grab exactly one frame
+            frame = q.get().getCvFrame()
+        finally:
+            # THIS is the magic line that turns the camera off so the VLA can use it later
+            p.stop()
+            
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
+    return buf.tobytes()
+
+def capture_realsense_frame() -> bytes:
+    """Capture a single JPEG frame from Intel RealSense camera and IMMEDIATELY release the hardware."""
+    pipeline = rs.pipeline()
+    config = rs.config()
+    
+    # Enable the color stream (640x480 is standard and fast)
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    
+    pipeline.start(config)
+    try:
+        # RealSense cameras need to drop a few frames to let the auto-exposure settle
+        # Otherwise, the first frame is usually pitch black or extremely dark
+        for _ in range(5):
+            frames = pipeline.wait_for_frames()
+            
+        color_frame = frames.get_color_frame()
+        if not color_frame:
+            raise RuntimeError("Could not grab RealSense frame")
+            
+        # Convert to numpy array for OpenCV
+        color_image = np.asanyarray(color_frame.get_data())
+    finally:
+        # THIS is the magic line that turns the camera off so the VLA can use it later
+        pipeline.stop()
+        
+    _, buf = cv2.imencode(".jpg", color_image, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
+    return buf.tobytes()
+
 
 def get_live_stream_link(args):
     import asyncio
@@ -128,6 +221,18 @@ def get_live_stream_link(args):
         return f"Tunnel successful! The live stream URL is: {url}"
     return "Failed to get the tunnel URL after 20 seconds."
 
+def take_snapshot(args):
+    """Capture both cameras and save/send-ready images."""
+    import base64
+    oak_jpeg = capture_oak_frame()
+    rs_jpeg = capture_realsense_frame()
+
+    return json.dumps({
+        "ok": True,
+        "oak_image_b64": base64.b64encode(oak_jpeg).decode(),
+        "realsense_image_b64": base64.b64encode(rs_jpeg).decode(),
+        "message": "Captured wrist and external camera images."
+    })
 
 # Tool definitions: (description, schema, function)
 TOOLS = {
@@ -171,6 +276,11 @@ TOOLS = {
         {},  # No arguments needed!
         get_live_stream_link,
     ),
+    "take_snapshot": (
+    "Capture a fresh image from the wrist camera and external camera when the user asks to see the scene, asks for an image, photo, snapshot, or asks what the robot sees.",
+    {},
+    take_snapshot,
+),
 }
 
 

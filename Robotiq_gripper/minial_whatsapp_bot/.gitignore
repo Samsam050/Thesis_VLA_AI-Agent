@@ -7,6 +7,7 @@ __pycache__/
 env/
 venv/
 .env
+outputs/
 
 # Node.js bridge
 bridge/node_modules/

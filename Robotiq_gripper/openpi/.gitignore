@@ -31,6 +31,9 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+scripts/docker/install_docker_ubuntu22.sh
+scripts/docker/install_nvidia_container_toolkit.sh
+
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

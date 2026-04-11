@@ -14,14 +14,10 @@ import json
 import logging
 import os
 import signal
-import threading
+
 from collections import OrderedDict
 from pathlib import Path
-import pyrealsense2 as rs
-import numpy as np
 
-import cv2
-import depthai as dai
 import websockets
 from dotenv import load_dotenv
 
@@ -33,57 +29,6 @@ BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "")
 ALLOW_FROM = set(filter(None, os.getenv("ALLOW_FROM", "").split(",")))
 
 log = logging.getLogger("whatsapp")
-
-OAK_FRAME_WIDTH = int(os.getenv("OAK_FRAME_WIDTH", "640").strip())
-OAK_FRAME_HEIGHT = int(os.getenv("OAK_FRAME_HEIGHT", "360").strip())
-OAK_JPEG_QUALITY = min(100, max(10, int(os.getenv("OAK_JPEG_QUALITY", "80").strip())))
-
-_OAK_LOCK = threading.Lock()
-
-def capture_oak_frame() -> bytes:
-    """Capture a single JPEG frame from OAK-D RGB camera and IMMEDIATELY release the hardware."""
-    with _OAK_LOCK:
-        p = dai.Pipeline()
-        cam = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
-        q = cam.requestOutput((OAK_FRAME_WIDTH, OAK_FRAME_HEIGHT), dai.ImgFrame.Type.BGR888p).createOutputQueue()
-        p.start()
-        try:
-            # Grab exactly one frame
-            frame = q.get().getCvFrame()
-        finally:
-            # THIS is the magic line that turns the camera off so the VLA can use it later
-            p.stop()
-            
-    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
-    return buf.tobytes()
-
-def capture_realsense_frame() -> bytes:
-    """Capture a single JPEG frame from Intel RealSense camera and IMMEDIATELY release the hardware."""
-    pipeline = rs.pipeline()
-    config = rs.config()
-    
-    # Enable the color stream (640x480 is standard and fast)
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    
-    pipeline.start(config)
-    try:
-        # RealSense cameras need to drop a few frames to let the auto-exposure settle
-        # Otherwise, the first frame is usually pitch black or extremely dark
-        for _ in range(5):
-            frames = pipeline.wait_for_frames()
-            
-        color_frame = frames.get_color_frame()
-        if not color_frame:
-            raise RuntimeError("Could not grab RealSense frame")
-            
-        # Convert to numpy array for OpenCV
-        color_image = np.asanyarray(color_frame.get_data())
-    finally:
-        # THIS is the magic line that turns the camera off so the VLA can use it later
-        pipeline.stop()
-        
-    _, buf = cv2.imencode(".jpg", color_image, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
-    return buf.tobytes()
 
 
 class WhatsAppBot:
@@ -167,27 +112,6 @@ class WhatsAppBot:
 
         log.info("Message from %s: %s", phone, clean_content[:80])
 
-        # 2. Snapshot Interceptor
-        # If you ask for a picture, grab it quickly, send it, and return.
-        snapshot_triggers = {"picture", "snapshot", "photo", "see", "camera", "look"}
-        if any(word in clean_content.lower() for word in snapshot_triggers):
-            await self._send(chat_id, "Taking a quick look through both cameras... (They will turn off immediately after)")
-            try:
-                loop = asyncio.get_event_loop()
-                
-                # Grab and send the Wrist Camera (OAK-D)
-                oak_jpeg = await loop.run_in_executor(None, capture_oak_frame)
-                await self._send_image(chat_id, oak_jpeg, "Wrist Camera (OAK-D)")
-                
-                # Grab and send the External Camera (RealSense)
-                rs_jpeg = await loop.run_in_executor(None, capture_realsense_frame)
-                await self._send_image(chat_id, rs_jpeg, "External Camera (RealSense)")
-                
-            except Exception as e:
-                log.error("Camera capture failed: %s", e)
-                await self._send(chat_id, f"Failed to get a picture: {e}")
-            return
-
         # 3. Pass everything else to the AI Agent
         hist = self.histories.setdefault(chat_id, [])
         hist.append({"role": "user", "content": clean_content})
@@ -196,6 +120,17 @@ class WhatsAppBot:
             None, self.model.generate_response, hist
         )
         hist.append({"role": "assistant", "content": reply})
+        # If the model returned snapshot JSON, send images instead of plain text
+        try:
+            parsed = json.loads(reply)
+            if isinstance(parsed, dict) and parsed.get("ok") and "oak_image_b64" in parsed and "realsense_image_b64" in parsed:
+                await self._send(chat_id, "Taking a quick look through both cameras...")
+                await self._send_image(chat_id, base64.b64decode(parsed["oak_image_b64"]), "Wrist Camera (OAK-D)")
+                await self._send_image(chat_id, base64.b64decode(parsed["realsense_image_b64"]), "External Camera (RealSense)")
+                hist.append({"role": "assistant", "content": "[Sent snapshot images]"})
+                return
+        except Exception:
+            pass
 
         await self._send(chat_id, reply)
 
