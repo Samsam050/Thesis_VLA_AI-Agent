@@ -43,7 +43,7 @@ class Args:
     #TODO: i may increase steps when i use the fine-tuning model... will try tommorw
 
     # Remote server parameters
-    remote_host: str = "130.243.124.161"  # point this to the IP address of the policy server, e.g., "192.168.1.100"
+    remote_host: str = "130.243.124.173"  # point this to the IP address of the policy server, e.g., "192.168.1.100"
     remote_port: int = (
         8000  # point this to the port of the policy server, default server port for openpi servers is 8000
     )

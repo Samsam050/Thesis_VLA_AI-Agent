@@ -70,7 +70,7 @@ class Args:
 
 
     # Remote server parameters
-    remote_host: str = "130.243.124.161"  # point this to the IP address of the policy server
+    remote_host: str = "130.243.124.173"  # point this to the IP address of the policy server
     remote_port: int = 8000  # default server port for openpi servers is 8000
 
 
