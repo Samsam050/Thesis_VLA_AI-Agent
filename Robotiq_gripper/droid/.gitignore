@@ -1,1 +1,23 @@
 *.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build / packaging
+*.egg-info/
+build/
+dist/
+
+# Hydra / runtime outputs / logs
+outputs/
+**/.hydra/
+*.log
+
+# Local notes
+steps.txt
+
+# Ignore unwanted FAIRO subtrees
+droid/fairo/droidlet/
+droid/fairo/perception/sandbox/polygrasp/
