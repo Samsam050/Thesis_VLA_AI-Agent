@@ -40,6 +40,7 @@ INSTRUCTION_FILE = Path("/tmp/robot_instruction.txt")
 TTS_SCRIPT = "/home/frankanuc01/Thesis_H/Thesis/Robotiq_gripper/droid/scripts/TTS.py"
 ROBOT_UPDATES_FILE = Path("/tmp/robot_updates.jsonl")
 ROBOT_RESULT_FILE = Path("/tmp/robot_result.json")
+CONFIRMATION_FILE = Path("/tmp/robot_confirmation.txt")
 
 faulthandler.enable()
 
@@ -189,6 +190,7 @@ def initialize_feedback_files():
     ROBOT_UPDATES_FILE.parent.mkdir(parents=True, exist_ok=True)
     ROBOT_UPDATES_FILE.write_text("", encoding="utf-8")
     ROBOT_RESULT_FILE.write_text("{}", encoding="utf-8")
+    CONFIRMATION_FILE.write_text("", encoding="utf-8")
 
 
 def emit_robot_update(event_type: str, message: str, final: bool = False, **extra):
@@ -1063,13 +1065,25 @@ def _run_subtask_list(subtasks, env, args: Args, policy_client, live_stream) -> 
     finally:
         _terminate_process(speaker_process)
 
+def wait_for_user_confirmation() -> str:
+    print(f"Waiting for confirmation file: {CONFIRMATION_FILE}")
+    while True:
+        try:
+            if CONFIRMATION_FILE.exists():
+                text = CONFIRMATION_FILE.read_text(encoding="utf-8").strip().lower()
+                if text:
+                    CONFIRMATION_FILE.write_text("", encoding="utf-8")
+                    return text
+        except Exception as e:
+            logging.error(f"Confirmation read error: {e}")
+        time.sleep(0.5)
 
 def run_robot_action(env, instruction, args, policy_client, live_stream):
     max_steps_per_subtask = args.max_timesteps
     total_steps_across_attempts = 0
 
     for attempt_idx in range(args.max_subtask_retries + 1):
-        print(f"Starting subtask attempt {attempt_idx + 1}/{args.max_subtask_retries + 1}: {instruction}")
+        #print(f"Starting subtask attempt {attempt_idx + 1}/{args.max_subtask_retries + 1}: {instruction}")
 
         actions_from_chunk_completed = 0
         pred_action_chunk = None
@@ -1205,7 +1219,7 @@ def run_robot_action(env, instruction, args, policy_client, live_stream):
                 if actions_from_chunk_completed == 0 or actions_from_chunk_completed >= args.open_loop_horizon:
                     actions_from_chunk_completed = 0
 
-                    print(instruction)
+                    #print(instruction)
                     request_data = _build_policy_request(instruction, curr_obs, args)
 
                     with prevent_keyboard_interrupt():
@@ -1213,8 +1227,8 @@ def run_robot_action(env, instruction, args, policy_client, live_stream):
 
                 action = pred_action_chunk[actions_from_chunk_completed]
                 actions_from_chunk_completed += 1
-                print("what get from model:")
-                print(action[-1])
+                #print("what get from model:")
+                #print(action[-1])
 
                 action = _binarize_action(action)
                 env.step(action)
@@ -1225,7 +1239,7 @@ def run_robot_action(env, instruction, args, policy_client, live_stream):
                     time.sleep(1 / DROID_CONTROL_FREQUENCY - elapsed_time)
 
         except KeyboardInterrupt:
-            print("killed ok")
+            #print("killed ok")
             return {"status": "stopped_by_user", "completed_step": total_steps_across_attempts + step_count}
 
         total_steps_across_attempts += step_count
@@ -1265,7 +1279,6 @@ def run_robot_action(env, instruction, args, policy_client, live_stream):
 def execute_task_with_vlm(task_description: str, env, args: Args, policy_client, live_stream) -> dict:
     initialize_steps_file()
     initialize_feedback_files()
-    emit_robot_update("task_started", f"Started task: {task_description}", task=task_description)
 
     curr_obs = _extract_observation(args, env.get_observation())
 
@@ -1286,7 +1299,30 @@ def execute_task_with_vlm(task_description: str, env, args: Args, policy_client,
     if pre_decision == "ask_user_confirm":
         message = pre_message or "The scene is ambiguous and needs user confirmation before continuing."
         print(f"Preflight warning: {message}")
-        return _final_result("needs_user_confirm", message, task=task_description)
+
+        emit_robot_update(
+            "needs_user_confirm",
+            f"{message} Reply yes to continue or no to cancel.",
+            status="needs_user_confirm",
+            task=task_description,
+        )
+
+        user_answer = wait_for_user_confirmation()
+
+        if user_answer not in {"y", "yes"}:
+            return _final_result(
+                "cancelled_by_user",
+                "Task cancelled by user after confirmation request.",
+                task=task_description,
+            )
+
+        emit_robot_update(
+            "confirmation_received",
+            "User confirmed. Continuing task.",
+            status="confirmation_received",
+            task=task_description,
+        )
+    emit_robot_update("task_started", f"Started task: {task_description}", task=task_description)
 
     r = split_task_into_subtasks(task_description, curr_obs)
     if r["status"] != "success":
@@ -1409,6 +1445,8 @@ def main(args: Args):
                 print(f"Task ended: wrong object failure. {result.get('message', '')}")
             elif result["status"] == "already_done":
                 print(f"Task already done. {result.get('message', '')}")
+            elif result["status"] == "cancelled_by_user":
+                print(f"Task cancelled by user. {result.get('message', '')}")
             else:
                 print(f"Task ended with status: {result['status']}")
                 if result.get("message"):
