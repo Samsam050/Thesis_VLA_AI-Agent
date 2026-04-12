@@ -64,10 +64,15 @@ class Args:
     # Retry count per subtask
     max_subtask_retries: int = 3
 
+    # How many consecutive missing-target votes are needed
+    missing_target_confirmation_needed: int = 2
+
     # Stall detection
     stall_window_steps: int = 1000
     stall_distance_threshold: float = 0.01  # meters
 
+    missing_target_first_check_steps: int = 30
+    missing_target_confirm_delay_steps: int = 80
 
     # Remote server parameters
     remote_host: str = "130.243.124.173"  # point this to the IP address of the policy server
@@ -318,6 +323,58 @@ def check_wrong_object_interaction(subtask: str, curr_obs: dict, args: Args) -> 
         logging.error(f"Failed wrong-object check: {e}")
         return {"decision": "error", "message": str(e)}
 
+def confirm_wrong_object_interaction(subtask: str, curr_obs: dict, args: Args) -> dict:
+    """
+    Immediate second confirmation for wrong-object detection.
+    """
+    try:
+        logging.info(f"Wrong-object confirmation for subtask: {subtask}")
+
+        prompt = (
+            f"You are a strict visual confirmation checker for wrong-object interaction.\n"
+            f"The robot is currently executing this subtask:\n"
+            f"'{subtask}'\n\n"
+
+            f"You are shown TWO images of the SAME scene from TWO camera views.\n"
+            f"Use both views together.\n"
+            f"Do NOT count the same object twice.\n\n"
+
+            f"Your ONLY job is to confirm whether the robot is CLEARLY manipulating the WRONG object.\n\n"
+
+            f"Allowed decisions:\n"
+            f"- continue\n"
+            f"- wrong_object_detected\n\n"
+
+            f"Confirmation rules:\n"
+            f"- Be stricter than the first check.\n"
+            f"- Return wrong_object_detected ONLY if a wrong object is clearly held, lifted, or carried by the robot.\n"
+            f"- If the robot is empty-handed, return continue.\n"
+            f"- If the robot is releasing, has just released, or is still near the correct target object, return continue.\n"
+            f"- If the scene is ambiguous, return continue.\n"
+            f"- Do NOT infer wrong object from proximity alone.\n"
+            f"- Do NOT infer wrong object from placement/release motion of the correct target.\n\n"
+
+            f"Return ONLY valid JSON.\n"
+            f"Do not write explanation.\n"
+            f"Do not use markdown.\n"
+            f"Do not use code fences.\n"
+            f'Do not write any text before or after the JSON.\n'
+            f'Use exactly this format: {{"decision":"continue","message":""}}\n'
+        )
+
+        answer = _query_vlm_with_images(prompt, curr_obs)
+        result = _parse_supervisor_response(answer)
+
+        if result["decision"] not in {"continue", "wrong_object_detected"}:
+            result = {"decision": "continue", "message": "", "raw": answer}
+
+        logging.info(f"Wrong-object confirmation response: {result}")
+        return result
+
+    except Exception as e:
+        logging.error(f"Failed wrong-object confirmation: {e}")
+        return {"decision": "error", "message": str(e)}
+
 
 def check_subtask_completion(subtask: str, curr_obs: dict, args: Args) -> dict:
     """
@@ -410,6 +467,120 @@ def check_subtask_completion(subtask: str, curr_obs: dict, args: Args) -> dict:
     except Exception as e:
         logging.error(f"Failed subtask completion check: {e}")
         return {"status": "no", "raw": str(e)}
+
+
+def should_enable_runtime_missing_target_check(subtask: str, curr_obs: dict) -> bool:
+    """
+    Ask the supervisor whether runtime missing-target monitoring is useful
+    for this subtask in the current scene.
+    """
+    try:
+        logging.info(f"Deciding whether to enable runtime missing-target check for: {subtask}")
+
+        prompt = (
+    f"You are a supervisory reasoning module for a Franka robot.\n"
+    f"The robot is about to execute this subtask:\n"
+    f"'{subtask}'\n\n"
+
+    f"You are shown TWO images of the SAME physical scene from TWO camera views.\n"
+    f"Use both views together.\n"
+    f"Do NOT count the same object twice.\n\n"
+
+    f"Your job is to decide whether runtime missing-target monitoring should be enabled.\n\n"
+
+    f"Enable runtime missing-target monitoring ONLY when ALL of the following are true:\n"
+    f"1. The target object for this subtask is NOT clearly visible right now.\n"
+    f"2. The task could still be valid because the target might be hidden, occluded, or inside a container.\n"
+    f"3. Later robot motion or inspection could reveal whether the target is actually present or missing.\n\n"
+
+    f"Do NOT enable runtime missing-target monitoring if the target object is already clearly visible right now,\n"
+    f"even if it will later be placed into a box, bowl, or container.\n\n"
+
+    f"Examples:\n"
+    f"- 'pick up bear from box' and no bear is visible, but it could be inside the box -> enable true\n"
+    f"- 'take out banana from bowl' and no banana is visible, but it could be hidden in the bowl -> enable true\n"
+    f"- 'put blue train in box' and the blue train is clearly visible on the table -> enable false\n"
+    f"- 'put cube on plate' and the cube is clearly visible -> enable false\n\n"
+
+    f"Return ONLY valid JSON in exactly one of these forms:\n"
+    f'{{"enable": true, "message": ""}}\n'
+    f'{{"enable": false, "message": ""}}\n'
+    f"Do not use markdown.\n"
+    f"Do not use code fences.\n"
+    f"Do not write anything outside the JSON.\n"
+)
+
+        answer = _query_vlm_with_images(prompt, curr_obs)
+        data = _safe_parse_json(answer)
+
+        enable = bool(data.get("enable", False))
+        logging.info(f"Runtime missing-target enabled={enable} for subtask: {subtask}")
+        return enable
+
+    except Exception as e:
+        logging.error(f"Failed runtime-missing-target enable decision: {e}")
+        return False
+
+
+def check_missing_target_during_execution(subtask: str, curr_obs: dict, args: Args) -> dict:
+    """
+    Runtime missing-target checker for retrieval/container subtasks.
+    This is ONLY used after execution has already started.
+    """
+    try:
+        logging.info(f"Runtime missing-target check for subtask: {subtask}")
+
+        prompt = (
+            f"You are a strict visual checker for possible missing target during execution.\n"
+            f"The robot is currently executing this subtask:\n"
+            f"'{subtask}'\n\n"
+
+            f"You are shown TWO images of the SAME physical scene from TWO camera views.\n"
+            f"Use both views together.\n"
+            f"Do NOT count the same object twice.\n\n"
+
+            f"Allowed decisions:\n"
+            f"- continue\n"
+            f"- missing_target\n\n"
+
+            f"Your job is to decide whether the target is NOW genuinely missing for this subtask.\n\n"
+
+            f"Important rules:\n"
+            f"- Be conservative.\n"
+            f"- If uncertain, return continue.\n"
+            f"- If the target could still be hidden by box walls, container walls, camera angle, robot arm, gripper, or occlusion, return continue.\n"
+            f"- If the container interior is not yet clearly visible enough, return continue.\n"
+            f"- If the robot may not yet have inspected the relevant inside area well enough, return continue.\n"
+            f"- Return missing_target ONLY if the relevant container/interior is clearly open and inspectable, and the target is still not there.\n"
+            f"- Do NOT judge wrong-object interaction.\n"
+            f"- Do NOT judge completion.\n"
+            f"- This is ONLY a missing-target check.\n\n"
+
+            f"Examples:\n"
+            f"- If the box is open but the inside is still partly hidden by the box walls: continue.\n"
+            f"- If the box is open, clearly visible inside, and the target object is not there: missing_target.\n"
+            f"- If the lid is still on or partly covering the view: continue.\n\n"
+
+            f"Return ONLY valid JSON.\n"
+            f"Do not write explanation.\n"
+            f"Do not use markdown.\n"
+            f"Do not use code fences.\n"
+            f'Do not write any text before or after the JSON.\n'
+            f'Use exactly this format: {{"decision":"continue","message":""}}\n'
+        )
+
+        answer = _query_vlm_with_images(prompt, curr_obs)
+        result = _parse_supervisor_response(answer)
+
+        if result["decision"] not in {"continue", "missing_target"}:
+            result = {"decision": "continue", "message": "", "raw": answer}
+
+        logging.info(f"Runtime missing-target response: {result}")
+        return result
+
+    except Exception as e:
+        logging.error(f"Failed runtime missing-target check: {e}")
+        return {"decision": "continue", "message": str(e)}
 
 
 def final_task_completion_check(task_description: str, curr_obs: dict, args: Args) -> dict:
@@ -584,8 +755,12 @@ def verify_remaining_subtasks(task_description: str, env, args: Args) -> dict:
 
         remaining = result["subtasks"]
         if len(remaining) == 0:
-            logging.info("Task appears complete after replanning.")
-            return {"status": "complete", "remaining_subtasks": []}
+            logging.info("No remaining subtasks found, but whole task is still incomplete.")
+            return {
+                "status": "missing_target",
+                "message": "Target object not found in the scene.",
+                "remaining_subtasks": []
+            }
 
         logging.info(f"Remaining subtasks found: {remaining}")
         return {"status": "incomplete", "remaining_subtasks": remaining}
@@ -638,13 +813,17 @@ def run_robot_action(env, instruction, args, policy_client, display):
         step_count = 0
         attempt_outcome = None
         cartesian_history = deque(maxlen=args.stall_window_steps)
-
+        runtime_missing_votes = 0
+        runtime_missing_first_vote_step = None
         wrong_object_pending = False
         wrong_object_first_step = None
         
         # Initial pre-check before motion starts:
         # only checks if subtask is already complete.
         start_obs = _extract_observation(args, env.get_observation())
+        runtime_missing_target_enabled = should_enable_runtime_missing_target_check(instruction, start_obs)
+        if runtime_missing_target_enabled:
+            print("enabled missing target function")
         start_completion = check_subtask_completion(instruction, start_obs, args)
         if start_completion["status"] == "done":
             print(f"START CHECK: subtask already done: {instruction}")
@@ -685,7 +864,7 @@ def run_robot_action(env, instruction, args, policy_client, display):
                 # If there is already a wrong-object suspicion, confirm it AFTER 14 more steps.
                 if wrong_object_pending and wrong_object_first_step is not None:
                     if step_count >= wrong_object_first_step + args.wrong_object_confirm_delay_steps:
-                        confirm_result = check_wrong_object_interaction(instruction, curr_obs, args)
+                        confirm_result = confirm_wrong_object_interaction(instruction, curr_obs, args)
                         confirm_decision = confirm_result.get("decision", "continue")
 
                         if confirm_decision == "wrong_object_detected":
@@ -713,6 +892,40 @@ def run_robot_action(env, instruction, args, policy_client, display):
                         )
                         wrong_object_pending = True
                         wrong_object_first_step = step_count
+                
+                # Runtime missing-target checker:
+                # only for retrieval/container subtasks and only after some motion.
+                should_check = False
+
+                if runtime_missing_target_enabled:
+                    if runtime_missing_votes == 0:
+                        should_check = step_count >= args.missing_target_first_check_steps
+                    else:
+                        should_check = step_count >= runtime_missing_first_vote_step + args.missing_target_confirm_delay_steps
+
+                if should_check:
+                    missing_result = check_missing_target_during_execution(instruction, curr_obs, args)
+                    missing_decision = missing_result.get("decision", "continue")
+
+                    if missing_decision == "missing_target":
+                        runtime_missing_votes += 1
+                        if runtime_missing_votes == 1:
+                            runtime_missing_first_vote_step = step_count
+                        print(
+                            f"RUNTIME MISSING-TARGET vote {runtime_missing_votes}/{args.missing_target_confirmation_needed}"
+                        )
+
+                        if runtime_missing_votes >= args.missing_target_confirmation_needed:
+                            completed_step = total_steps_across_attempts + step_count
+                            append_completed_step(completed_step)
+                            print(f"MISSING TARGET confirmed for subtask '{instruction}'.")
+                            return {
+                                "status": "missing_target",
+                                "completed_step": total_steps_across_attempts + step_count,
+                                "message": missing_result.get("message", ""),
+                            }
+                    else:
+                        runtime_missing_votes = 0
 
                 # Main supervisor only checks done / no
                 if step_count > 0 and step_count % args.replan_steps == 0:
@@ -776,13 +989,6 @@ def run_robot_action(env, instruction, args, policy_client, display):
             "message": "Subtask reached max retries or steps."
         }
 
-    print(f"TIMEOUT: Subtask '{instruction}' reached max retries/steps.")
-    return {
-        "status": "timeout",
-        "completed_step": total_steps_across_attempts,
-        "message": "Subtask reached max retries or steps."
-    }
-
 
 def execute_task_with_vlm(task_description: str, env, args: Args, policy_client, display) -> dict:
     initialize_steps_file()
@@ -808,7 +1014,17 @@ def execute_task_with_vlm(task_description: str, env, args: Args, policy_client,
             return {"status": "cancelled_by_user", "message": pre_message}
 
     r = split_task_into_subtasks(task_description, curr_obs)
-    subtasks = r.get("subtasks", [task_description])
+    if r["status"] != "success":
+        return r
+
+    subtasks = r["subtasks"]
+    if len(subtasks) == 0:
+        print("Planning found no valid target object in the scene.")
+        return {
+            "status": "missing_target",
+            "message": "Target object not found in the scene."
+        }
+
     logging.info(f"Identified {len(subtasks)} subtasks: {subtasks}")
 
     logging.info(f"Starting execution for task: '{subtasks}'")
@@ -891,6 +1107,7 @@ def main(args: Args):
 
     env = RobotEnv(action_space="joint_velocity", gripper_action_space="position")
     print("Created the droid env!")
+    _log_and_reset(env)
     time.sleep(3.0)
     display = Display()
 

@@ -20,6 +20,7 @@ from pathlib import Path
 
 import websockets
 from dotenv import load_dotenv
+load_dotenv()
 
 from model import OpenAIModel
 from tunnel import CloudflaredTunnel
@@ -27,6 +28,9 @@ from tunnel import CloudflaredTunnel
 BRIDGE_URL = os.getenv("BRIDGE_URL", "ws://127.0.0.1:8765")
 BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "")
 ALLOW_FROM = set(filter(None, os.getenv("ALLOW_FROM", "").split(",")))
+ROBOT_UPDATES_FILE = Path(os.getenv("ROBOT_UPDATES_FILE", "/tmp/robot_updates.jsonl"))
+ROBOT_POLL_SECONDS = float(os.getenv("ROBOT_POLL_SECONDS", "1.0"))
+CONFIRMATION_FILE = Path("/tmp/robot_confirmation.txt")
 
 log = logging.getLogger("whatsapp")
 
@@ -38,6 +42,11 @@ class WhatsAppBot:
         self.seen: OrderedDict[str, None] = OrderedDict()
         self._ws = None
         self._tunnel = CloudflaredTunnel()
+        self.active_robot_chat: str | None = None
+        self._robot_watch_task: asyncio.Task | None = None
+        self._robot_updates_offset = ROBOT_UPDATES_FILE.stat().st_size if ROBOT_UPDATES_FILE.exists() else 0
+        self._last_robot_line: str | None = None
+        self._send_lock = asyncio.Lock()
 
     async def run(self):
         loop = asyncio.get_event_loop()
@@ -47,6 +56,8 @@ class WhatsAppBot:
         try:
             while True:
                 try:
+                    if self._robot_watch_task is None:
+                        self._robot_watch_task = asyncio.create_task(self._watch_robot_updates())
                     async with websockets.connect(BRIDGE_URL) as ws:
                         self._ws = ws
                         if BRIDGE_TOKEN:
@@ -70,6 +81,14 @@ class WhatsAppBot:
                 task.cancel()
 
     async def _cleanup(self):
+        #await self._tunnel.stop()
+        if self._robot_watch_task:
+            self._robot_watch_task.cancel()
+            try:
+                await self._robot_watch_task
+            except asyncio.CancelledError:
+                pass
+            self._robot_watch_task = None
         await self._tunnel.stop()
 
     async def _handle(self, raw: str):
@@ -111,6 +130,8 @@ class WhatsAppBot:
             return
 
         log.info("Message from %s: %s", phone, clean_content[:80])
+        self.active_robot_chat = chat_id
+        
 
         # 3. Pass everything else to the AI Agent
         hist = self.histories.setdefault(chat_id, [])
@@ -134,10 +155,67 @@ class WhatsAppBot:
 
         await self._send(chat_id, reply)
 
+    async def _watch_robot_updates(self):
+        while True:
+            try:
+                if not ROBOT_UPDATES_FILE.exists():
+                    await asyncio.sleep(ROBOT_POLL_SECONDS)
+                    continue
+
+                current_size = ROBOT_UPDATES_FILE.stat().st_size
+                if current_size < self._robot_updates_offset:
+                    self._robot_updates_offset = 0
+
+                with ROBOT_UPDATES_FILE.open("r", encoding="utf-8") as f:
+                    f.seek(self._robot_updates_offset)
+
+                    while True:
+                        line = f.readline()
+                        if not line:
+                            break
+
+                        self._robot_updates_offset = f.tell()
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        if line == self._last_robot_line:
+                            continue
+                        self._last_robot_line = line
+
+                        try:
+                            event = json.loads(line)
+                        except Exception:
+                            continue
+
+                        await self._relay_robot_event(event)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.warning("Robot watcher error: %s", e)
+
+            await asyncio.sleep(ROBOT_POLL_SECONDS)
+
+    async def _relay_robot_event(self, event: dict):
+        if not self.active_robot_chat:
+            return
+
+        message = (event.get("message") or "").strip()
+        status = (event.get("status") or "").strip()
+
+        if message:
+            await self._send(self.active_robot_chat, message)
+            return
+
+        if status:
+            await self._send(self.active_robot_chat, f"Robot update: {status}")
+            
     async def _send(self, to: str, text: str):
         if not self._ws: return
         try:
-            await self._ws.send(json.dumps({"type": "send", "to": to, "text": text}, ensure_ascii=False))
+            async with self._send_lock:
+                await self._ws.send(json.dumps({"type": "send", "to": to, "text": text}, ensure_ascii=False))
         except Exception as e:
             log.error("Send failed: %s", e)
 
@@ -145,7 +223,8 @@ class WhatsAppBot:
         if not self._ws: return
         try:
             payload = {"type": "send_image", "to": to, "image": base64.b64encode(jpeg).decode(), "caption": caption}
-            await self._ws.send(json.dumps(payload))
+            async with self._send_lock:
+                await self._ws.send(json.dumps(payload))
         except Exception as e:
             log.error("Send image failed: %s", e)
 
