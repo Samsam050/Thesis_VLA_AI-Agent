@@ -47,6 +47,7 @@ class WhatsAppBot:
         self._robot_updates_offset = ROBOT_UPDATES_FILE.stat().st_size if ROBOT_UPDATES_FILE.exists() else 0
         self._last_robot_line: str | None = None
         self._send_lock = asyncio.Lock()
+        self.awaiting_robot_confirmation_chat: str | None = None
 
     async def run(self):
         loop = asyncio.get_event_loop()
@@ -131,7 +132,23 @@ class WhatsAppBot:
 
         log.info("Message from %s: %s", phone, clean_content[:80])
         self.active_robot_chat = chat_id
-        
+        if self.awaiting_robot_confirmation_chat == chat_id:
+            decision = await self._classify_confirmation_reply(clean_content)
+
+            if decision == "yes":
+                CONFIRMATION_FILE.write_text("yes", encoding="utf-8")
+                self.awaiting_robot_confirmation_chat = None
+                await self._send(chat_id, "Okay, I’ll continue.")
+                return
+
+            if decision == "no":
+                CONFIRMATION_FILE.write_text("no", encoding="utf-8")
+                self.awaiting_robot_confirmation_chat = None
+                await self._send(chat_id, "Okay, I’ll stop here.")
+                return
+
+            await self._send(chat_id, "I was not sure if you meant yes or no. Please reply clearly.")
+            return
 
         # 3. Pass everything else to the AI Agent
         hist = self.histories.setdefault(chat_id, [])
@@ -203,6 +220,10 @@ class WhatsAppBot:
 
         message = (event.get("message") or "").strip()
         status = (event.get("status") or "").strip()
+        event_type = (event.get("event_type") or "").strip()
+
+        if status == "needs_user_confirm" or event_type == "needs_user_confirm":
+            self.awaiting_robot_confirmation_chat = self.active_robot_chat
 
         if message:
             await self._send(self.active_robot_chat, message)
@@ -227,7 +248,35 @@ class WhatsAppBot:
                 await self._ws.send(json.dumps(payload))
         except Exception as e:
             log.error("Send image failed: %s", e)
+    
+    async def _classify_confirmation_reply(self, text: str) -> str:
+        prompt = (
+            "You are classifying a user's reply to a robot confirmation question.\n"
+            "Decide whether the user means YES, NO, or UNCLEAR.\n\n"
+            "Return exactly one word only:\n"
+            "yes\n"
+            "no\n"
+            "unclear\n\n"
+            "Examples:\n"
+            "- 'yes please' -> yes\n"
+            "- 'yeah continue' -> yes\n"
+            "- 'go ahead' -> yes\n"
+            "- 'no stop' -> no\n"
+            "- 'don't continue' -> no\n"
+            "- 'wait what do you mean?' -> unclear\n\n"
+            f"User reply: {text}"
+        )
 
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            self.model.generate_response,
+            [{"role": "user", "content": prompt}],
+        )
+
+        answer = (result or "").strip().lower()
+        if answer not in {"yes", "no", "unclear"}:
+            return "unclear"
+        return answer
 
 def run_bot():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")

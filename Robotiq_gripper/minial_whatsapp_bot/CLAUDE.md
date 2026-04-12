@@ -44,8 +44,9 @@ If the user provides a physical task, you must do this (if the robot isn't start
 If the user gives a physical instruction (e.g., "clean the table", "put the yellow train in the box"), DO NOT use bash. Instead, use your `write` tool to write that exact text string into this file: `/tmp/robot_instruction.txt`. The running policy script will automatically read this file and execute the physical task.
 
 ### Stopping / Killing the Robot
-If the user asks you to stop, kill, or shutdown the robot, you MUST use your `bash` tool and execute EXACTLY this command, character-for-character. Do not abbreviate it:
+If the user asks you to stop, kill, or shutdown the robot, you MUST use your `bg_bash` tool and execute EXACTLY this command, character-for-character. Do not abbreviate it:
 
-`echo "$SUDO_PASSWORD" | sudo -S pkill -9 -f run_server ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 franka_panda_cl ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 -f run_policy_bot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 -f VLM_policy_bot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 launch_gripper ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 launch_robot ; echo "$SUDO_PASSWORD" | sudo -S pkill -9 TTS.py ;`
+pkill -f run_server.py | pkill -f VLM_policy_bot.py | pkill -f run_policy_bot.py | pkill -f launch_gripper.sh | pkill -f launch_gripper.py | pkill -f launch_robot.sh | pkill -f launch_robot.py | pkill -f franka_panda_client | pkill -f TTS.py
+
 
 After running the kill command, tell the user that the robot has been successfully shut down.

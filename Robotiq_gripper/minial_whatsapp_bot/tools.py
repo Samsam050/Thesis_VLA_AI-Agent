@@ -98,7 +98,8 @@ def bash(args):
     cmd = args["cmd"]
     # Explicitly export the password into this specific shell session
     full_cmd = f"export SUDO_PASSWORD='{sudo_pass}' && {cmd}"
-    
+    print(f"[DEBUG bash] full_cmd={full_cmd!r}", flush=True)
+
     proc = subprocess.Popen(
         full_cmd, shell=True, executable="/bin/bash", stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
