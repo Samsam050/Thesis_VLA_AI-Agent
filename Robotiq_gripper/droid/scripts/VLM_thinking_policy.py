@@ -30,6 +30,7 @@ os.environ["QT_QPA_PLATFORM"] = "xcb"
 DROID_CONTROL_FREQUENCY = 15
 STEPS_LOG_FILE = "steps.txt"
 VLM_MODEL = "gpt-5-mini"
+VLM_CHECK_COUNT = 0
 
 faulthandler.enable()
 
@@ -75,7 +76,7 @@ class Args:
     missing_target_confirm_delay_steps: int = 80
 
     # Remote server parameters
-    remote_host: str = "130.243.124.173"  # point this to the IP address of the policy server
+    remote_host: str = "130.243.124.161"  # point this to the IP address of the policy server
     remote_port: int = 8000  # default server port for openpi servers is 8000
 
 
@@ -120,9 +121,11 @@ def _safe_parse_json(text: str) -> dict:
 
 def _query_vlm_with_images(prompt: str, curr_obs: dict) -> str:
     ext_b64, wrist_b64 = _encode_obs_images(curr_obs)
+    global VLM_CHECK_COUNT 
 
     response = client.responses.create(
         model=VLM_MODEL,
+        #reasoning={"effort": "high"},
         input=[
             {
                 "role": "user",
@@ -140,6 +143,8 @@ def _query_vlm_with_images(prompt: str, curr_obs: dict) -> str:
             }
         ],
     )
+
+    VLM_CHECK_COUNT += 1
     return response.output_text.strip()
 
 
@@ -490,11 +495,13 @@ def should_enable_runtime_missing_target_check(subtask: str, curr_obs: dict) -> 
 
     f"Enable runtime missing-target monitoring ONLY when ALL of the following are true:\n"
     f"1. The target object for this subtask is NOT clearly visible right now.\n"
-    f"2. The task could still be valid because the target might be hidden, occluded, or inside a container.\n"
+    f"2. The task could still be valid because the target might be hidden, occluded, or inside a container, for example inside a box..\n"
     f"3. Later robot motion or inspection could reveal whether the target is actually present or missing.\n\n"
 
     f"Do NOT enable runtime missing-target monitoring if the target object is already clearly visible right now,\n"
     f"even if it will later be placed into a box, bowl, or container.\n\n"
+    f"DO have in mind that the task could be already done and the targetted object is inside the destination hidden \n\n"
+
 
     f"Examples:\n"
     f"- 'pick up bear from box' and no bear is visible, but it could be inside the box -> enable true\n"
@@ -681,7 +688,7 @@ def split_task_into_subtasks(task_description: str, curr_obs: dict) -> dict:
             f"- Order the subtasks by estimated distance to the robot and cameras.\n"
             f"- Start with objects that appear closest and easiest to reach.\n"
             f"- Leave objects that appear farther away for later.\n"
-            f"- If two objects seem similar in distance, prefer the one that is more clearly visible and less occluded first.\n\n"
+            f"- THIS IS IMPORTANT: Always start with the objects which is closet to the robot, so for example if the green cube is closer relative to the Franka robot, you have an external camera where you can roughly see the robot, make it the first subtask compared to the yellow train which is little more far.\n\n"
 
             f"Cleaning rules:\n"
             f"- If both a plate and a box are visible: fruits go in plate, toys go in box.\n"
@@ -801,7 +808,7 @@ def _log_and_reset(env, completed_step=None):
     time.sleep(1.0)
 
 
-def run_robot_action(env, instruction, args, policy_client, display):
+def run_robot_action(env, instruction, args, policy_client, display,runtime_missing_target_enabled):
     max_steps_per_subtask = args.max_timesteps
     total_steps_across_attempts = 0
 
@@ -821,7 +828,6 @@ def run_robot_action(env, instruction, args, policy_client, display):
         # Initial pre-check before motion starts:
         # only checks if subtask is already complete.
         start_obs = _extract_observation(args, env.get_observation())
-        runtime_missing_target_enabled = should_enable_runtime_missing_target_check(instruction, start_obs)
         if runtime_missing_target_enabled:
             print("enabled missing target function")
         start_completion = check_subtask_completion(instruction, start_obs, args)
@@ -882,6 +888,7 @@ def run_robot_action(env, instruction, args, policy_client, display):
                     and step_count > 0
                     and step_count % args.anomaly_check_steps == 0
                 ):
+                    print("checking if robot is doing wrong task")
                     wrong_result = check_wrong_object_interaction(instruction, curr_obs, args)
                     wrong_decision = wrong_result.get("decision", "continue")
 
@@ -930,6 +937,7 @@ def run_robot_action(env, instruction, args, policy_client, display):
                 # Main supervisor only checks done / no
                 if step_count > 0 and step_count % args.replan_steps == 0:
                     completion_result = check_subtask_completion(instruction, curr_obs, args)
+                    print("Checking if task is done")
                     if completion_result["status"] == "done":
                         print(f"SUCCESS: subtask '{instruction}' marked complete.")
                         return {
@@ -991,6 +999,8 @@ def run_robot_action(env, instruction, args, policy_client, display):
 
 
 def execute_task_with_vlm(task_description: str, env, args: Args, policy_client, display) -> dict:
+    global VLM_CHECK_COUNT
+    VLM_CHECK_COUNT = 0 
     initialize_steps_file()
     curr_obs = _extract_observation(args, env.get_observation())
 
@@ -1029,7 +1039,10 @@ def execute_task_with_vlm(task_description: str, env, args: Args, policy_client,
 
     logging.info(f"Starting execution for task: '{subtasks}'")
     for subtask in subtasks:
-        result = run_robot_action(env, subtask, args, policy_client, display)
+        subtask_obs = _extract_observation(args, env.get_observation())
+        runtime_missing_target_enabled = should_enable_runtime_missing_target_check(subtask, subtask_obs)
+
+        result = run_robot_action(env, subtask, args, policy_client, display, runtime_missing_target_enabled)
         if result["status"] != "success":
             print(f"Subtask '{subtask}' ended with status: {result['status']}")
             return result
@@ -1040,13 +1053,16 @@ def execute_task_with_vlm(task_description: str, env, args: Args, policy_client,
     verification = verify_remaining_subtasks(task_description, env, args)
 
     if verification["status"] == "complete":
+        print(f"Total VLM checks: {VLM_CHECK_COUNT}")
         return {"status": "success_all"}
 
     if verification["status"] == "incomplete":
         remaining_subtasks = verification["remaining_subtasks"]
 
         for subtask in remaining_subtasks:
-            result = run_robot_action(env, subtask, args, policy_client, display)
+            subtask_obs = _extract_observation(args, env.get_observation())
+            runtime_missing_target_enabled = should_enable_runtime_missing_target_check(subtask, subtask_obs)
+            result = run_robot_action(env, subtask, args, policy_client, display,runtime_missing_target_enabled)
             if result["status"] != "success":
                 print(f"Subtask '{subtask}' ended with status: {result['status']}")
                 return result
@@ -1056,6 +1072,7 @@ def execute_task_with_vlm(task_description: str, env, args: Args, policy_client,
 
         final_verification = verify_remaining_subtasks(task_description, env, args)
         if final_verification["status"] == "complete":
+            print(f"Total VLM checks: {VLM_CHECK_COUNT}")
             return {"status": "success_all"}
 
         return final_verification
