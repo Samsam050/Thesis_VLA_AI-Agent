@@ -1329,6 +1329,12 @@ def execute_task_with_vlm(task_description: str, env, args: Args, policy_client,
         return _final_result("error", message, task=task_description)
 
     subtasks = r.get("subtasks", [task_description])
+    if len(subtasks) == 0:
+        return _final_result(
+            "missing_target",
+            "Target object not found in the scene.",
+            task=task_description,
+        )
     logging.info(f"Identified {len(subtasks)} subtasks: {subtasks}")
 
     logging.info(f"Starting execution for task: '{subtasks}'")
