@@ -626,10 +626,6 @@ def check_subtask_completion(subtask: str, curr_obs: dict) -> dict:
         return {"status": "no", "raw": str(e)}
 
 def should_enable_runtime_missing_target_check(subtask: str, curr_obs: dict) -> bool:
-    """
-    Ask the supervisor whether runtime missing-target monitoring is useful
-    for this subtask in the current scene.
-    """
     try:
         logging.info(f"Deciding whether to enable runtime missing-target check for: {subtask}")
 
@@ -646,11 +642,13 @@ def should_enable_runtime_missing_target_check(subtask: str, curr_obs: dict) -> 
 
     f"Enable runtime missing-target monitoring ONLY when ALL of the following are true:\n"
     f"1. The target object for this subtask is NOT clearly visible right now.\n"
-    f"2. The task could still be valid because the target might be hidden, occluded, or inside a container.\n"
+    f"2. The task could still be valid because the target might be hidden, occluded, or inside a container, for example inside a box..\n"
     f"3. Later robot motion or inspection could reveal whether the target is actually present or missing.\n\n"
 
     f"Do NOT enable runtime missing-target monitoring if the target object is already clearly visible right now,\n"
     f"even if it will later be placed into a box, bowl, or container.\n\n"
+    f"DO have in mind that the task could be already done and the targeted object is inside the destination hidden \n\n"
+
 
     f"Examples:\n"
     f"- 'pick up bear from box' and no bear is visible, but it could be inside the box -> enable true\n"
@@ -832,11 +830,10 @@ def split_task_into_subtasks(task_description: str, curr_obs: dict) -> dict:
             f"- Each loose object may be moved at most ONCE in the plan.\n"
             f"- Do NOT create two subtasks for the same physical object.\n"
             f"- If uncertain whether two same-looking objects in different views are one object or two, prefer treating them as ONE object unless both are clearly visible at the same time in one view or there is strong evidence they are different objects.\n\n"
-
             f"- Order the subtasks by estimated distance to the robot and cameras.\n"
             f"- Start with objects that appear closest and easiest to reach.\n"
             f"- Leave objects that appear farther away for later.\n"
-            f"- If two objects seem similar in distance, prefer the one that is more clearly visible and less occluded first.\n\n"
+            f"- THIS IS IMPORTANT: Always start with the objects which is closet to the robot, so for example if the green cube is closer relative to the Franka robot, you have an external camera where you can roughly see the robot, make it the first subtask compared to the yellow train which is little more far.\n\n"
 
             f"Cleaning rules:\n"
             f"- If both a plate and a box are visible: fruits go in plate, toys go in box.\n"
@@ -1048,12 +1045,15 @@ def _run_subtask_list(subtasks, env, args: Args, policy_client, live_stream) -> 
             _terminate_process(speaker_process)
             speaker_process = _speak_subtask(subtask)
 
-            result = run_robot_action(env, subtask, args, policy_client, live_stream)
+            subtask_obs = _extract_observation(args, env.get_observation())
+            runtime_missing_target_enabled = should_enable_runtime_missing_target_check(subtask, subtask_obs)
+
+            result = run_robot_action(env, subtask, args, policy_client, live_stream,runtime_missing_target_enabled)
             if result["status"] != "success":
                 print(f"Subtask '{subtask}' ended with status: {result['status']}")
                 return result
 
-            completed_step = result.get("completed_step")
+            #completed_step = result.get("completed_step")
             #_log_and_reset(env, completed_step)
             print("resetting")
             time.sleep(1.0)
@@ -1078,7 +1078,7 @@ def wait_for_user_confirmation() -> str:
             logging.error(f"Confirmation read error: {e}")
         time.sleep(0.5)
 
-def run_robot_action(env, instruction, args, policy_client, live_stream):
+def run_robot_action(env, instruction, args, policy_client, live_stream, runtime_missing_target_enabled) -> dict:
     max_steps_per_subtask = args.max_timesteps
     total_steps_across_attempts = 0
 
@@ -1098,7 +1098,6 @@ def run_robot_action(env, instruction, args, policy_client, live_stream):
         # Initial pre-check before motion starts:
         # only checks if subtask is already complete.
         start_obs = _extract_observation(args, env.get_observation())
-        runtime_missing_target_enabled = should_enable_runtime_missing_target_check(instruction, start_obs)
         if runtime_missing_target_enabled:
             print("enabled missing target function")
         start_completion = check_subtask_completion(instruction, start_obs)

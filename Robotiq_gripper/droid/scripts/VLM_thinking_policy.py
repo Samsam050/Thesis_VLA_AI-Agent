@@ -475,10 +475,6 @@ def check_subtask_completion(subtask: str, curr_obs: dict, args: Args) -> dict:
 
 
 def should_enable_runtime_missing_target_check(subtask: str, curr_obs: dict) -> bool:
-    """
-    Ask the supervisor whether runtime missing-target monitoring is useful
-    for this subtask in the current scene.
-    """
     try:
         logging.info(f"Deciding whether to enable runtime missing-target check for: {subtask}")
 
@@ -500,7 +496,7 @@ def should_enable_runtime_missing_target_check(subtask: str, curr_obs: dict) -> 
 
     f"Do NOT enable runtime missing-target monitoring if the target object is already clearly visible right now,\n"
     f"even if it will later be placed into a box, bowl, or container.\n\n"
-    f"DO have in mind that the task could be already done and the targetted object is inside the destination hidden \n\n"
+    f"DO have in mind that the task could be already done and the targeted object is inside the destination hidden \n\n"
 
 
     f"Examples:\n"
@@ -645,7 +641,7 @@ def split_task_into_subtasks(task_description: str, curr_obs: dict) -> dict:
     try:
         logging.info(f"Splitting task into subtasks if needed: '{task_description}'")
 
-        ext_b64, wrist_b64 = _encode_obs_images(curr_obs)
+        #ext_b64, wrist_b64 = _encode_obs_images(curr_obs)
 
         prompt = (
             f"You are a strict high-level planner for the Pi0.5 VLA robot.\n"
