@@ -16,7 +16,7 @@ resize_func_map = {"cv2": cv2.resize, None: None}
 # Output sizes for the adapter layer. These are output frame sizes, not claims about
 # the underlying sensor being a real stereo RGB camera.
 
-standard_params = dict(camera_resolution=(640, 480), camera_fps=52)
+standard_params = dict(camera_resolution=(640, 480), camera_fps=30)
 #standard_params = dict(camera_resolution=(640, 350), camera_fps=30)
 advanced_params = dict(camera_resolution=(2054, 1520), camera_fps=30)
 
@@ -308,7 +308,7 @@ class RealSenseCamera:
             config = rs.config()
             config.enable_device(self.serial_number)
             #config.enable_stream(rs.stream.color, 1280, 720, rs.format.bgr8, 30)
-            config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 60)
+            config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
             self.profile = self.pipeline.start(config)
 
             try:
