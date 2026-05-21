@@ -60,8 +60,8 @@ def play_episode(file_path):
                     if not ret:
                         break
                     
-                    cv2.putText(frame, f"Cam: {cam_name}", (10, 30), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    #cv2.putText(frame, f"Cam: {cam_name}", (10, 30), 
+                                #cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     
                     # Convert RGB to BGR for display
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -80,7 +80,7 @@ def play_episode(file_path):
 
 if __name__ == "__main__":
     # Update filename if needed
-    FILENAME = "collected_data/put_fruit_in_bowl/episode_21_20260125_213344.h5" 
+    FILENAME = "collected_data/put_toy_in_box/episode_23_20260124_233648.h5" 
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", type=str, default=FILENAME, help="Path to .h5 file")
