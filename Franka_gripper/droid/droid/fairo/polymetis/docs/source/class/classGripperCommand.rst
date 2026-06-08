@@ -1,4 +1,0 @@
-Class GripperCommand
-====================
-
-.. doxygenclass:: GripperCommand

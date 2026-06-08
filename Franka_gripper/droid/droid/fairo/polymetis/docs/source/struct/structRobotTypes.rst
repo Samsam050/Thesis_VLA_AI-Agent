@@ -1,4 +1,0 @@
-Struct RobotTypes
-=================
-
-.. doxygenstruct:: RobotTypes

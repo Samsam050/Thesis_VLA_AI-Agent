@@ -1,4 +1,0 @@
-Class membuf
-============
-
-.. doxygenclass:: membuf
